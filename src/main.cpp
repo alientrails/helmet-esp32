@@ -204,8 +204,8 @@ void setup() {
   Serial.begin(115200);
   delay(200);
   Serial.printf("\nhelmet-esp32 %s  XIAO  USB power bank\n", HELMET_FW_VERSION);
-  Serial.printf("PWM D10/GPIO%d  OLED SDA GPIO%d SCL GPIO%d\n", PIN_LED_PWM, PIN_SDA,
-                PIN_SCL);
+  Serial.printf("WS2812 D10/GPIO%d  count %d  OLED SDA GPIO%d SCL GPIO%d\n",
+                PIN_LED_DATA, LED_COUNT, PIN_SDA, PIN_SCL);
   Serial.printf("buttons L/R/S GPIO %d %d %d  mic GPIO%d\n", PIN_BTN_LEFT,
                 PIN_BTN_RIGHT, PIN_BTN_SELECT, PIN_MIC);
 

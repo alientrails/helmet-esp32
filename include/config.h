@@ -2,7 +2,7 @@
 
 // Helmet LED controller — Seeed XIAO ESP32, USB power bank, 0.91" OLED.
 
-#define HELMET_FW_VERSION "1.2.0"
+#define HELMET_FW_VERSION "1.3.0"
 
 // 0.91" modules are almost always SSD1306 128x32 at 0x3C.
 // If the screen is blank, try 0x3D. If you actually have a 0.96" 128x64,
@@ -19,16 +19,16 @@
   #define PIN_BTN_SELECT 4  // D3
   #define PIN_SDA 5         // D4
   #define PIN_SCL 6         // D5
-  #define PIN_LED_PWM 9     // D10
+  #define PIN_LED_DATA 9    // D10  WS2812B DIN
   #define PIN_MIC 1         // D0 analog
 #else
-  // Seeed XIAO ESP32-C3 (default)
+  // Seeed XIAO ESP32-C3
   #define PIN_BTN_LEFT 3    // D1
   #define PIN_BTN_RIGHT 4   // D2
   #define PIN_BTN_SELECT 5  // D3
   #define PIN_SDA 6         // D4
   #define PIN_SCL 7         // D5
-  #define PIN_LED_PWM 10    // D10
+  #define PIN_LED_DATA 10   // D10  WS2812B DIN
   #define PIN_MIC 2         // D0 analog (GPIO2)
 #endif
 
@@ -46,11 +46,11 @@
 
 #define BUTTON_INVERT 1  // INPUT_PULLUP, pressed = LOW
 
-#define PWM_FREQ_HZ 5000
-#define PWM_RESOLUTION_BITS 8
-#define PWM_CHANNEL 0
-
-#define BRIGHTNESS_DEFAULT 220
+// Cut the BTF WS2812B reel to helmet length. Count pixels and set this.
+// 60/m × 1 m ≈ 60 LEDs. Do not run the full 5 m / 300 px off USB.
+#define LED_COUNT 60
+#define LED_MAX_MA 1000
+#define BRIGHTNESS_DEFAULT 96
 #define BRIGHTNESS_STEP 8
 #define BRIGHTNESS_MIN 8
 

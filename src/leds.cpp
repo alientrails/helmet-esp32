@@ -1,5 +1,6 @@
 #include "leds.h"
 
+#include <FastLED.h>
 #include <math.h>
 
 #include "config.h"
@@ -7,13 +8,12 @@
 namespace Leds {
 namespace {
 
+CRGB leds[LED_COUNT];
+
 uint8_t gMode = MODE_SOLID;
 uint8_t gBrightness = BRIGHTNESS_DEFAULT;
 bool gOn = true;
-uint8_t lastDuty = 255;  // force first write
-uint32_t partyRng = 0xC0FFEEu;
-uint32_t partyUntil = 0;
-bool partyLit = false;
+uint8_t lastDuty = 0;
 
 float micDc = 2048.0f;
 float micBass = 0.0f;
@@ -27,19 +27,6 @@ uint16_t micPrime = 0;
 const char *kNames[MODE_COUNT] = {"Solid",      "Breathe", "Heartbeat", "Slow blink",
                                   "Fast blink", "Strobe",  "SOS",       "Party",
                                   "Bass"};
-
-uint32_t partyRand() {
-  partyRng = partyRng * 1664525u + 1013904223u;
-  return partyRng;
-}
-
-void pwmWriteRaw(uint8_t duty) {
-  if (duty == lastDuty) {
-    return;
-  }
-  lastDuty = duty;
-  ledcWrite(PWM_CHANNEL, duty);
-}
 
 uint8_t patternDuty(uint32_t now) {
   switch (gMode) {
@@ -71,13 +58,7 @@ uint8_t patternDuty(uint32_t now) {
       return seq[idx] ? 255 : 0;
     }
     case MODE_PARTY:
-      if (now >= partyUntil) {
-        partyLit = !partyLit;
-        const uint32_t span =
-            partyLit ? (40u + partyRand() % 120u) : (60u + partyRand() % 420u);
-        partyUntil = now + span;
-      }
-      return partyLit ? 255 : 0;
+      return 255;
     default:
       return 0;
   }
@@ -147,6 +128,38 @@ uint8_t bassDuty() {
   return (uint8_t)(out * 255.0f + 0.5f);
 }
 
+void renderStrip(uint8_t level) {
+  if (!gOn || level == 0) {
+    fill_solid(leds, LED_COUNT, CRGB::Black);
+    lastDuty = 0;
+    return;
+  }
+
+  lastDuty = scale8(level, gBrightness);
+
+  switch (gMode) {
+    case MODE_PARTY:
+      fill_rainbow(leds, LED_COUNT, (millis() / 12) & 0xFF, 7);
+      break;
+    case MODE_BASS: {
+      CRGB c = CHSV(192, 255, 255);
+      if (level > 210) {
+        c = CRGB::White;
+      }
+      fill_solid(leds, LED_COUNT, c);
+      nscale8(leds, LED_COUNT, level);
+      const uint16_t lit = ((uint16_t)level * LED_COUNT) / 255u;
+      for (uint16_t i = lit; i < LED_COUNT; i++) {
+        leds[i].nscale8_video(40);
+      }
+      break;
+    }
+    default:
+      fill_solid(leds, LED_COUNT, CRGB(level, level, level));
+      break;
+  }
+}
+
 }  // namespace
 
 void begin() {
@@ -155,24 +168,26 @@ void begin() {
   analogSetPinAttenuation(PIN_MIC, ADC_11db);
   analogRead(PIN_MIC);
 
-  ledcSetup(PWM_CHANNEL, PWM_FREQ_HZ, PWM_RESOLUTION_BITS);
-  ledcAttachPin(PIN_LED_PWM, PWM_CHANNEL);
-  lastDuty = 255;
-  pwmWriteRaw(0);
+  FastLED.addLeds<WS2812B, PIN_LED_DATA, GRB>(leds, LED_COUNT);
+  FastLED.setMaxPowerInVoltsAndMilliamps(5, LED_MAX_MA);
+  FastLED.setBrightness(gBrightness);
+  fill_solid(leds, LED_COUNT, CRGB::Black);
+  FastLED.show();
   resetMic();
 }
 
 void loop() {
-  uint8_t duty = 0;
+  uint8_t level = 0;
   if (gOn) {
     if (gMode == MODE_BASS) {
-      duty = (uint8_t)((bassDuty() * (uint16_t)gBrightness) / 255u);
+      level = bassDuty();
     } else {
-      const uint16_t raw = patternDuty(millis());
-      duty = (uint8_t)((raw * (uint16_t)gBrightness) / 255u);
+      level = patternDuty(millis());
     }
   }
-  pwmWriteRaw(duty);
+  FastLED.setBrightness(gBrightness);
+  renderStrip(level);
+  FastLED.show();
 }
 
 void setMode(uint8_t mode) {
