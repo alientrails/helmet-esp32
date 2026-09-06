@@ -4,7 +4,8 @@ Replaces the stock helmet LEDs with a **WS2812B** (3-wire) strip on a
 **Seeed XIAO ESP32-S3**. Power is a USB power bank into USB-C. A 0.91" I2C
 OLED, three buttons, and a MAX9814 mic are the controls.
 
-Phone web UI and Android app are next — not in this build.
+Controllable from the [Android app](android/README.md) over Bluetooth LE —
+no WiFi needed.
 
 This firmware drives **individually addressable** 5 V strips (WS2812B /
 BTF-LIGHTING ECO). It does **not** drive a 2-wire MOSFET strip.
@@ -122,3 +123,10 @@ If colors look swapped (red/green), the strip is not GRB — say so and we
 can switch the color order.
 
 If the OLED is upside down, set `OLED_ROTATION` to `2` in `include/config.h`.
+
+## Android app
+
+The firmware advertises as `Helmet-LED-XXXX` over BLE once flashed. Build and
+install the app from [`android/`](android/README.md) to control mode,
+brightness, and on/off from a phone — see that folder's README for the GATT
+protocol details.

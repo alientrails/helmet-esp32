@@ -5,3 +5,15 @@
 *.map
 .DS_Store
 dist/
+
+# Android app
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+android/gradle/wrapper/gradle-wrapper.jar
+android/gradlew
+android/gradlew.bat
+android/*.iml
+android/app/*.iml

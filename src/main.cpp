@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <Preferences.h>
 
+#include "ble.h"
 #include "config.h"
 #include "leds.h"
 #include "ui.h"
@@ -141,10 +142,6 @@ static BtnEvent pollButton(Button &b) {
 }
 
 static void handleButtons() {
-  const uint8_t modeBefore = Leds::mode();
-  const uint8_t briBefore = Leds::brightness();
-  const bool onBefore = Leds::on();
-
   for (int i = 0; i < 3; i++) {
     const BtnEvent ev = pollButton(buttons[i]);
     if (ev == BTN_NONE) {
@@ -169,11 +166,6 @@ static void handleButtons() {
         Ui::onSelectLong();
       }
     }
-  }
-
-  if (Leds::mode() != modeBefore || Leds::brightness() != briBefore ||
-      Leds::on() != onBefore) {
-    markPrefsDirty();
   }
 }
 
@@ -214,13 +206,25 @@ void setup() {
   prefs.begin(PREFS_NAMESPACE, false);
   loadPrefs();
   Ui::begin();
+  Ble::begin();
 }
 
 void loop() {
+  const uint8_t modeBefore = Leds::mode();
+  const uint8_t briBefore = Leds::brightness();
+  const bool onBefore = Leds::on();
+
   handleButtons();
   handleSerial();
+  Ble::loop();
   Leds::loop();
   Ui::loop();
+
+  if (Leds::mode() != modeBefore || Leds::brightness() != briBefore ||
+      Leds::on() != onBefore) {
+    markPrefsDirty();
+  }
+
   savePrefsIfNeeded();
   delay(Leds::mode() == MODE_BASS ? 0 : 2);
 }
