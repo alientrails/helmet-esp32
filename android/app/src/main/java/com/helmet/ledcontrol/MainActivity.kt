@@ -90,6 +90,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun HelmetScreen(ble: HelmetBle, onConnectClick: () -> Unit) {
     val connectionState by ble.connectionState.collectAsState()
