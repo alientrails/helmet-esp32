@@ -10,7 +10,7 @@
 #define OLED_WIDTH 128
 #define OLED_HEIGHT 32
 #define OLED_ADDRESS 0x3C
-#define OLED_ROTATION 0  // 0 = USB-C up relative to the silk, 2 = flipped
+#define OLED_ROTATION 2  // 0 = USB-C up relative to the silk, 2 = flipped
 
 #if defined(HELMET_BOARD_XIAO_S3)
   // Seeed XIAO ESP32-S3
@@ -49,8 +49,8 @@
 // Cut the BTF WS2812B reel to helmet length. Count pixels and set this.
 // 60/m × 1 m ≈ 60 LEDs. Do not run the full 5 m / 300 px off USB.
 #define LED_COUNT 60
-#define LED_MAX_MA 1000
-#define BRIGHTNESS_DEFAULT 96
+#define LED_MAX_MA 500
+#define BRIGHTNESS_DEFAULT 220
 #define BRIGHTNESS_STEP 8
 #define BRIGHTNESS_MIN 8
 
