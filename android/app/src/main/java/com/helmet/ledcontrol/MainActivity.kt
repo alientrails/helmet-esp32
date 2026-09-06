@@ -34,6 +34,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.helmet.ledcontrol.ui.theme.HelmetTheme
 
 class MainActivity : ComponentActivity() {
     private lateinit var ble: HelmetBle
@@ -55,7 +56,7 @@ class MainActivity : ComponentActivity() {
         ble = HelmetBle(applicationContext)
 
         setContent {
-            MaterialTheme {
+            HelmetTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     HelmetScreen(ble = ble, onConnectClick = { requestScan() })
                 }
