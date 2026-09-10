@@ -14,6 +14,7 @@ uint8_t gMode = MODE_SOLID;
 uint8_t gBrightness = BRIGHTNESS_DEFAULT;
 bool gOn = true;
 uint8_t lastDuty = 0;
+CRGB gColor = CRGB::White;
 
 float micDc = 2048.0f;
 float micBass = 0.0f;
@@ -154,9 +155,12 @@ void renderStrip(uint8_t level) {
       }
       break;
     }
-    default:
-      fill_solid(leds, LED_COUNT, CRGB(level, level, level));
+    default: {
+      CRGB c = gColor;
+      c.nscale8_video(level);
+      fill_solid(leds, LED_COUNT, c);
       break;
+    }
   }
 }
 
@@ -207,6 +211,8 @@ void setBrightness(uint8_t brightness) {
   gBrightness = brightness;
 }
 
+void setColor(uint8_t r, uint8_t g, uint8_t b) { gColor = CRGB(r, g, b); }
+
 void setOn(bool on) { gOn = on; }
 
 void toggle() { gOn = !gOn; }
@@ -231,5 +237,11 @@ const char *modeNameAt(uint8_t index) {
 }
 uint8_t brightnessPercent() { return (uint8_t)((gBrightness * 100u) / 255u); }
 uint8_t outputLevel() { return lastDuty; }
+
+void color(uint8_t *r, uint8_t *g, uint8_t *b) {
+  *r = gColor.r;
+  *g = gColor.g;
+  *b = gColor.b;
+}
 
 }  // namespace Leds

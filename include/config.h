@@ -12,7 +12,24 @@
 #define OLED_ADDRESS 0x3C
 #define OLED_ROTATION 2  // 0 = USB-C up relative to the silk, 2 = flipped
 
-#if defined(HELMET_BOARD_XIAO_S3)
+#if defined(HELMET_BOARD_CYD)
+  // ESP32-2432S028R "Cheap Yellow Display" — resistive touch (XPT2046),
+  // 320x240 ILI9341 TFT. Pins confirmed against
+  // github.com/witnessmenow/ESP32-Cheap-Yellow-Display/blob/main/PINS.md.
+  //
+  // Display uses HSPI (12/13/14/15/2), set via TFT_eSPI build_flags in
+  // platformio.ini. Touch has its OWN separate SPI bus — NOT shared with the
+  // display, despite most TFT_eSPI/CYD tutorials assuming it is.
+  #define PIN_LED_DATA 22   // P3/CN1 header, WS2812B DIN
+  #define PIN_MIC 35        // P3 header, analog in (input-only pin)
+  #define TFT_BACKLIGHT_PIN 21
+
+  #define TOUCH_CLK 25
+  #define TOUCH_MISO 39
+  #define TOUCH_MOSI 32
+  #define TOUCH_CS 33
+  #define TOUCH_IRQ 36
+#elif defined(HELMET_BOARD_XIAO_S3)
   // Seeed XIAO ESP32-S3
   #define PIN_BTN_LEFT 2    // D1
   #define PIN_BTN_RIGHT 3   // D2

@@ -10,7 +10,9 @@
 //   0x03 SET_ON          value = 0/1
 //   0x04 TOGGLE          value ignored
 //   0x05 NUDGE_BRIGHTNESS value = signed delta (int8_t)
-// State (read/notify) 7b1e8f02-...: 4 bytes [mode, brightness, on, outputLevel]
+//   0x06 SET_COLOR       value = 3 bytes [r, g, b]
+// State (read/notify) 7b1e8f02-...: 7 bytes
+//   [mode, brightness, on, outputLevel, r, g, b]
 
 namespace Ble {
 void begin();

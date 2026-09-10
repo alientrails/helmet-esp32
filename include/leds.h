@@ -24,6 +24,7 @@ void setBrightness(uint8_t brightness);
 void setOn(bool on);
 void toggle();
 void nudgeBrightness(int delta);
+void setColor(uint8_t r, uint8_t g, uint8_t b);  // tint used by solid-color modes
 
 uint8_t mode();
 uint8_t brightness();
@@ -32,4 +33,5 @@ const char *modeName();
 const char *modeNameAt(uint8_t index);
 uint8_t brightnessPercent();
 uint8_t outputLevel();  // live PWM 0–255, for the OLED meter
+void color(uint8_t *r, uint8_t *g, uint8_t *b);
 }  // namespace Leds

@@ -1,17 +1,10 @@
 #include <Arduino.h>
-#include <Preferences.h>
 
 #include "ble.h"
 #include "config.h"
 #include "leds.h"
+#include "persist.h"
 #include "ui.h"
-
-static Preferences prefs;
-static bool prefsDirty = false;
-static uint32_t prefsDirtyAt = 0;
-static uint8_t lastSavedMode = 0xFF;
-static uint8_t lastSavedBri = 0xFF;
-static bool lastSavedOn = true;
 
 enum BtnEvent : uint8_t { BTN_NONE, BTN_CLICK, BTN_LONG, BTN_REPEAT };
 
@@ -28,43 +21,6 @@ struct Button {
 };
 
 static Button buttons[3];
-
-static void markPrefsDirty() {
-  prefsDirty = true;
-  prefsDirtyAt = millis();
-}
-
-static void savePrefsIfNeeded() {
-  if (!prefsDirty || (millis() - prefsDirtyAt) < 600) {
-    return;
-  }
-  const uint8_t mode = Leds::mode();
-  const uint8_t bri = Leds::brightness();
-  const bool on = Leds::on();
-  if (mode == lastSavedMode && bri == lastSavedBri && on == lastSavedOn) {
-    prefsDirty = false;
-    return;
-  }
-  prefs.putUChar("mode", mode);
-  prefs.putUChar("bri", bri);
-  prefs.putBool("on", on);
-  lastSavedMode = mode;
-  lastSavedBri = bri;
-  lastSavedOn = on;
-  prefsDirty = false;
-}
-
-static void loadPrefs() {
-  const uint8_t mode = prefs.getUChar("mode", MODE_SOLID);
-  const uint8_t bri = prefs.getUChar("bri", BRIGHTNESS_DEFAULT);
-  const bool on = prefs.getBool("on", true);
-  Leds::setMode(mode);
-  Leds::setBrightness(bri);
-  Leds::setOn(on);
-  lastSavedMode = Leds::mode();
-  lastSavedBri = Leds::brightness();
-  lastSavedOn = Leds::on();
-}
 
 static void setupButtons() {
   const int pins[3] = {PIN_BTN_LEFT, PIN_BTN_RIGHT, PIN_BTN_SELECT};
@@ -176,19 +132,26 @@ static void handleSerial() {
   const char c = (char)Serial.read();
   if (c == 'n' || c == 'N') {
     Leds::setMode((uint8_t)((Leds::mode() + 1) % MODE_COUNT));
-    markPrefsDirty();
+    Persist::markDirty();
     Serial.printf("mode %s\n", Leds::modeName());
   } else if (c == 'b' || c == 'B') {
     Leds::nudgeBrightness(BRIGHTNESS_STEP);
-    markPrefsDirty();
+    Persist::markDirty();
     Serial.printf("brightness %u\n", Leds::brightness());
   } else if (c == 'o' || c == 'O') {
     Leds::toggle();
-    markPrefsDirty();
+    Persist::markDirty();
     Serial.printf("lights %s\n", Leds::on() ? "on" : "off");
   } else if (c == 's' || c == 'S') {
     Serial.printf("on=%d mode=%s bri=%u\n", Leds::on(), Leds::modeName(),
                   Leds::brightness());
+  } else if (c == 'm' || c == 'M') {
+    Serial.printf("mic pin %d raw:", PIN_MIC);
+    for (int i = 0; i < 20; i++) {
+      Serial.printf(" %d", analogRead(PIN_MIC));
+      delay(15);
+    }
+    Serial.println();
   }
 }
 
@@ -203,28 +166,17 @@ void setup() {
 
   Leds::begin();
   setupButtons();
-  prefs.begin(PREFS_NAMESPACE, false);
-  loadPrefs();
+  Persist::begin();
   Ui::begin();
   Ble::begin();
 }
 
 void loop() {
-  const uint8_t modeBefore = Leds::mode();
-  const uint8_t briBefore = Leds::brightness();
-  const bool onBefore = Leds::on();
-
   handleButtons();
   handleSerial();
   Ble::loop();
   Leds::loop();
   Ui::loop();
-
-  if (Leds::mode() != modeBefore || Leds::brightness() != briBefore ||
-      Leds::on() != onBefore) {
-    markPrefsDirty();
-  }
-
-  savePrefsIfNeeded();
+  Persist::loop();
   delay(Leds::mode() == MODE_BASS ? 0 : 2);
 }

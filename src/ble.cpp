@@ -19,6 +19,7 @@ enum Opcode : uint8_t {
   OP_SET_ON = 0x03,
   OP_TOGGLE = 0x04,
   OP_NUDGE_BRIGHTNESS = 0x05,
+  OP_SET_COLOR = 0x06,
 };
 
 NimBLECharacteristic *gStateChar = nullptr;
@@ -27,6 +28,9 @@ uint8_t gLastMode = 0xFF;
 uint8_t gLastBri = 0xFF;
 bool gLastOn = true;
 uint8_t gLastLevel = 0xFF;
+uint8_t gLastR = 0xFF;
+uint8_t gLastG = 0xFF;
+uint8_t gLastB = 0xFF;
 
 void applyControl(const uint8_t *data, size_t len) {
   if (len < 1) {
@@ -50,6 +54,12 @@ void applyControl(const uint8_t *data, size_t len) {
       break;
     case OP_NUDGE_BRIGHTNESS:
       Leds::nudgeBrightness((int8_t)value);
+      break;
+    case OP_SET_COLOR:
+      if (len < 4) {
+        return;
+      }
+      Leds::setColor(data[1], data[2], data[3]);
       break;
     default:
       return;
@@ -78,17 +88,22 @@ void pushState(bool force) {
   const uint8_t bri = Leds::brightness();
   const bool on = Leds::on();
   const uint8_t level = Leds::outputLevel();
+  uint8_t r, g, b;
+  Leds::color(&r, &g, &b);
 
   if (!force && mode == gLastMode && bri == gLastBri && on == gLastOn &&
-      level == gLastLevel) {
+      level == gLastLevel && r == gLastR && g == gLastG && b == gLastB) {
     return;
   }
   gLastMode = mode;
   gLastBri = bri;
   gLastOn = on;
   gLastLevel = level;
+  gLastR = r;
+  gLastG = g;
+  gLastB = b;
 
-  const uint8_t payload[4] = {mode, bri, (uint8_t)(on ? 1 : 0), level};
+  const uint8_t payload[7] = {mode, bri, (uint8_t)(on ? 1 : 0), level, r, g, b};
   gStateChar->setValue(payload, sizeof(payload));
   gStateChar->notify();
 }
