@@ -22,6 +22,7 @@ enum Opcode : uint8_t {
   OP_SET_COLOR = 0x06,
 };
 
+NimBLEServer *gServer = nullptr;
 NimBLECharacteristic *gStateChar = nullptr;
 bool gDirty = false;
 uint8_t gLastMode = 0xFF;
@@ -120,6 +121,7 @@ void begin() {
 
   NimBLEServer *server = NimBLEDevice::createServer();
   server->setCallbacks(&gServerCallbacks);
+  gServer = server;
 
   NimBLEService *service = server->createService(kServiceUuid);
 
@@ -141,5 +143,7 @@ void begin() {
 }
 
 void loop() { pushState(false); }
+
+bool connected() { return gServer != nullptr && gServer->getConnectedCount() > 0; }
 
 }  // namespace Ble

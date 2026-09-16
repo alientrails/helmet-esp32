@@ -124,6 +124,52 @@ can switch the color order.
 
 If the OLED is upside down, set `OLED_ROTATION` to `2` in `include/config.h`.
 
+## CYD touchscreen build
+
+There is a second hardware target: the **ESP32-2432S028R "Cheap Yellow
+Display"** — a classic ESP32 with a 2.8" 320x240 ILI9341 panel and a
+resistive XPT2046 touchscreen. It replaces the OLED and the three buttons
+with a full touch UI, and runs the same LED engine, BLE service and
+persistence as the XIAO builds.
+
+```bash
+pio run -e cyd -t upload
+```
+
+Wire the strip to the **P3/CN1** header: `DIN` to GPIO22 (via 330 Ohm),
+plus 5V and GND. The mic goes to GPIO35.
+
+The interface is built with [LVGL](https://lvgl.io) on top of TFT_eSPI:
+
+- **Top bar** — wordmark, the running mode, BLE link state, power switch.
+  A hairline meter underneath shows the live PWM level in the strip's own
+  colour, so you can see a pattern running without looking up.
+- **Brightness** — always visible, full width, works anywhere in the UI.
+- **Modes** — the nine patterns as a 3x3 grid; the live one is filled and
+  glows.
+- **Colour** — a hue ring with the current colour and its hex in the middle,
+  plus twelve presets including a warm and a neutral white.
+- **System** — firmware, strip, BLE and uptime, and a touch recalibration
+  button.
+
+Touch is calibrated on first boot (three targets) and the affine solution is
+stored in NVS, so any panel orientation works without hard-coded constants.
+Press `c` over serial to redo it, `t` to dump raw touch samples.
+
+### Previewing the UI without a board
+
+`src/ui_screens.cpp` is deliberately free of Arduino and TFT_eSPI, so the
+exact shipping layout can be rendered on a desktop:
+
+```bash
+pio pkg install -e cyd
+make -C tools/sim
+./tools/sim/build/preview /tmp/shots
+```
+
+That writes one PPM per page (splash, Modes, Colour, System). Handy for
+iterating on spacing and colour without a flash cycle.
+
 ## Android app
 
 The firmware advertises as `Helmet-LED-XXXX` over BLE once flashed. Build and

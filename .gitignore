@@ -17,3 +17,7 @@ android/gradlew
 android/gradlew.bat
 android/*.iml
 android/app/*.iml
+
+# Host preview build for the CYD screens
+tools/sim/build/
+*.ppm

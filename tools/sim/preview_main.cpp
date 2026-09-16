@@ -1,0 +1,189 @@
+// Host preview for the CYD touchscreen UI.
+//
+// Compiles the *real* src/ui_screens.cpp and src/ui_theme.cpp against LVGL on
+// the desktop, renders each page into an offscreen framebuffer and writes it
+// out as a PPM. Lets the layout be reviewed (and regressions spotted) without
+// flashing a board. Leds::/Ble:: are stubbed here; everything else is the
+// firmware's own code.
+//
+//   make -C tools/sim && tools/sim/build/preview out/
+
+#include <lvgl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "ble.h"
+#include "leds.h"
+#include "ui_screens.h"
+#include "ui_theme.h"
+
+// ---------------------------------------------------------------------------
+// Fake clock — LV_TICK_CUSTOM reads millis(), so the preview drives time by
+// hand and animations land on exactly the frame we want to capture.
+// ---------------------------------------------------------------------------
+
+static unsigned long gNow = 0;
+
+extern "C" unsigned long millis(void) { return gNow; }
+
+// ---------------------------------------------------------------------------
+// Stubbed firmware state
+// ---------------------------------------------------------------------------
+
+namespace {
+uint8_t sMode = MODE_PARTY;
+uint8_t sBri = 200;
+bool sOn = true;
+uint8_t sR = 0x00, sG = 0xA8, sB = 0xFF;
+uint8_t sLevel = 190;
+bool sBleConnected = false;
+
+const char *kNames[MODE_COUNT] = {"Solid",      "Breathe", "Heartbeat", "Slow blink",
+                                  "Fast blink", "Strobe",  "SOS",       "Party",
+                                  "Bass"};
+}  // namespace
+
+namespace Leds {
+void setMode(uint8_t m) { sMode = m; }
+void setBrightness(uint8_t b) { sBri = b; }
+void setOn(bool on) { sOn = on; }
+void setColor(uint8_t r, uint8_t g, uint8_t b) {
+  sR = r;
+  sG = g;
+  sB = b;
+}
+uint8_t mode() { return sMode; }
+uint8_t brightness() { return sBri; }
+bool on() { return sOn; }
+const char *modeName() { return kNames[sMode]; }
+const char *modeNameAt(uint8_t i) { return i < MODE_COUNT ? kNames[i] : ""; }
+uint8_t brightnessPercent() { return (uint8_t)((sBri * 100u) / 255u); }
+uint8_t outputLevel() { return sLevel; }
+void color(uint8_t *r, uint8_t *g, uint8_t *b) {
+  *r = sR;
+  *g = sG;
+  *b = sB;
+}
+}  // namespace Leds
+
+namespace Ble {
+bool connected() { return sBleConnected; }
+}  // namespace Ble
+
+// ---------------------------------------------------------------------------
+// Offscreen display
+// ---------------------------------------------------------------------------
+
+namespace {
+
+constexpr int W = UiTheme::SCREEN_W;
+constexpr int H = UiTheme::SCREEN_H;
+
+uint8_t gFrame[W * H * 3];
+lv_color_t gDrawPixels[W * H];
+lv_disp_draw_buf_t gDrawBuf;
+lv_disp_drv_t gDispDrv;
+
+inline uint8_t expand(uint32_t v, uint32_t bits) {
+  const uint32_t max = (1u << bits) - 1u;
+  return (uint8_t)((v * 255u + max / 2u) / max);
+}
+
+void flushCb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *pixels) {
+  for (int y = area->y1; y <= area->y2; y++) {
+    for (int x = area->x1; x <= area->x2; x++) {
+      const uint16_t c = pixels[(y - area->y1) * (area->x2 - area->x1 + 1) +
+                                (x - area->x1)]
+                             .full;
+      uint8_t *px = &gFrame[(y * W + x) * 3];
+      px[0] = expand((c >> 11) & 0x1F, 5);
+      px[1] = expand((c >> 5) & 0x3F, 6);
+      px[2] = expand(c & 0x1F, 5);
+    }
+  }
+  lv_disp_flush_ready(drv);
+}
+
+void advance(uint32_t ms) {
+  for (uint32_t t = 0; t < ms; t += 10) {
+    gNow += 10;
+    lv_timer_handler();
+  }
+}
+
+void capture(const char *dir, const char *name) {
+  lv_obj_invalidate(lv_scr_act());
+  lv_obj_invalidate(lv_layer_top());
+  lv_refr_now(NULL);
+
+  char path[512];
+  snprintf(path, sizeof(path), "%s/%s.ppm", dir, name);
+  FILE *f = fopen(path, "wb");
+  if (f == NULL) {
+    fprintf(stderr, "cannot write %s\n", path);
+    exit(1);
+  }
+  fprintf(f, "P6\n%d %d\n255\n", W, H);
+  fwrite(gFrame, 1, sizeof(gFrame), f);
+  fclose(f);
+  printf("wrote %s\n", path);
+}
+
+}  // namespace
+
+int main(int argc, char **argv) {
+  const char *outDir = argc > 1 ? argv[1] : ".";
+
+  lv_init();
+  lv_disp_draw_buf_init(&gDrawBuf, gDrawPixels, NULL, W * H);
+  lv_disp_drv_init(&gDispDrv);
+  gDispDrv.hor_res = W;
+  gDispDrv.ver_res = H;
+  gDispDrv.flush_cb = flushCb;
+  gDispDrv.draw_buf = &gDrawBuf;
+  lv_disp_t *disp = lv_disp_drv_register(&gDispDrv);
+
+  lv_disp_set_theme(disp, lv_theme_default_init(disp, UiTheme::col(UiTheme::ACCENT),
+                                                UiTheme::col(UiTheme::ACCENT_LT), true,
+                                                &lv_font_montserrat_14));
+
+  UiTheme::init();
+  UiScreens::build();
+  UiScreens::sync(0);
+  UiScreens::showSplash(1200);
+
+  advance(300);
+  capture(outDir, "1-splash");
+
+  advance(2000);  // let the splash hold, fade and delete itself
+
+  UiScreens::showTab(0);
+  UiScreens::sync(97);
+  advance(200);
+  capture(outDir, "2-modes");
+
+  UiScreens::showTab(1);
+  advance(200);
+  capture(outDir, "3-colour");
+
+  UiScreens::showTab(2);
+  sBleConnected = true;
+  UiScreens::sync(4337);
+  advance(200);
+  capture(outDir, "4-system");
+
+  // Off, dimmed, warm white — the other end of the state space.
+  UiScreens::showTab(0);
+  sMode = MODE_BREATHE;
+  sOn = false;
+  sBri = 40;
+  sR = 0xFF;
+  sG = 0xC9;
+  sB = 0x8A;
+  UiScreens::sync(4337);
+  advance(300);
+  capture(outDir, "5-modes-off");
+
+  return 0;
+}

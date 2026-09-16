@@ -17,4 +17,5 @@
 namespace Ble {
 void begin();
 void loop();
+bool connected();  // true while a central is subscribed/linked
 }  // namespace Ble
