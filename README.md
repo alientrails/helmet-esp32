@@ -139,14 +139,19 @@ pio run -e cyd -t upload
 Wire the strip to the **P3/CN1** header: `DIN` to GPIO22 (via 330 Ohm),
 plus 5V and GND. The mic goes to GPIO35.
 
-The interface is built with [LVGL](https://lvgl.io) on top of TFT_eSPI:
+The interface is built with [LVGL](https://lvgl.io) on top of TFT_eSPI and
+wears the Alien Trails Labs identity (see [`brand/`](brand/README.md)):
 
-- **Top bar** — wordmark, the running mode, BLE link state, power switch.
+- **Boot** — the Alien Trails Labs mark pops in, the wordmark follows and a
+  status line types out; it holds for `LOGO_SPLASH_MS` (2.5 s) and fades to
+  the controls.
+- **Top bar** — the mark, the running mode, a BLE signal tag (`BLE` ring while
+  advertising, `LINK` disc when a phone is connected) and the power switch.
   A hairline meter underneath shows the live PWM level in the strip's own
   colour, so you can see a pattern running without looking up.
-- **Brightness** — always visible, full width, works anywhere in the UI.
-- **Modes** — the nine patterns as a 3x3 grid; the live one is filled and
-  glows.
+- **Brightness** — always visible: a dotted phosphor-to-ion trail that ends in
+  the draggable ion signal dot.
+- **Modes** — the nine patterns as a 3x3 grid; the live one is tinted phosphor.
 - **Colour** — a hue ring with the current colour and its hex in the middle,
   plus twelve presets including a warm and a neutral white.
 - **System** — firmware, strip, BLE and uptime, and a touch recalibration
@@ -167,7 +172,8 @@ make -C tools/sim
 ./tools/sim/build/preview /tmp/shots
 ```
 
-That writes one PPM per page (splash, Modes, Colour, System). Handy for
+That writes one PPM per frame (the boot splash timeline, Modes, Colour,
+System). Handy for
 iterating on spacing and colour without a flash cycle.
 
 ## Android app

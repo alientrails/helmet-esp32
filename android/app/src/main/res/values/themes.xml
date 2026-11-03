@@ -1,7 +1,9 @@
 <resources>
+    <!-- Dark first: the window is void from the very first frame, so there is
+         no white flash before the Compose splash draws. -->
     <style name="Theme.HelmetLED" parent="android:Theme.Material.NoActionBar">
-        <item name="android:windowBackground">#10131A</item>
-        <item name="android:navigationBarColor">#10131A</item>
-        <item name="android:statusBarColor">#10131A</item>
+        <item name="android:windowBackground">@color/at_void</item>
+        <item name="android:navigationBarColor">@color/at_void</item>
+        <item name="android:statusBarColor">@color/at_void</item>
     </style>
 </resources>

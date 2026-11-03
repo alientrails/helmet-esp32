@@ -29,6 +29,10 @@
   #define TOUCH_MOSI 32
   #define TOUCH_CS 33
   #define TOUCH_IRQ 36
+
+  // How long the Alien Trails Labs logo holds on boot before fading to the
+  // controls. The fade itself adds 300 ms.
+  #define LOGO_SPLASH_MS 2500
 #elif defined(HELMET_BOARD_XIAO_S3)
   // Seeed XIAO ESP32-S3
   #define PIN_BTN_LEFT 2    // D1

@@ -114,23 +114,28 @@ bool waitForTouchPoint(float *rawX, float *rawY, uint32_t timeoutMs) {
 
 // Painted with TFT_eSPI directly: this runs either before LVGL exists or as a
 // blocking modal, and it must not re-enter lv_timer_handler().
+uint16_t rgb565(uint32_t hex) {
+  return tft.color565((hex >> 16) & 0xFF, (hex >> 8) & 0xFF, hex & 0xFF);
+}
+
 void drawCalibrationTarget(int step, int tx, int ty) {
-  const uint16_t bg = tft.color565(0x0B, 0x0E, 0x14);
+  const uint16_t bg = rgb565(VOID);
   tft.fillScreen(bg);
 
   tft.setTextDatum(MC_DATUM);
-  tft.setTextColor(tft.color565(0xE7, 0xEC, 0xF5), bg);
+  tft.setTextColor(rgb565(INK), bg);
   tft.drawString("Touch the target", SCREEN_W / 2, SCREEN_H / 2 - 10, 4);
 
-  char sub[16];
-  snprintf(sub, sizeof(sub), "%d of 3", step + 1);
-  tft.setTextColor(tft.color565(0x6D, 0x7A, 0x90), bg);
+  char sub[24];
+  snprintf(sub, sizeof(sub), "CALIBRATE  %d / 3", step + 1);
+  tft.setTextColor(rgb565(INK_MUTED), bg);
   tft.drawString(sub, SCREEN_W / 2, SCREEN_H / 2 + 16, 2);
 
-  const uint16_t accent = tft.color565(0x2F, 0x86, 0xFF);
-  tft.drawCircle(tx, ty, 12, tft.color565(0x2B, 0x34, 0x46));
-  tft.drawCircle(tx, ty, 7, accent);
-  tft.fillCircle(tx, ty, 2, accent);
+  // A signal pip: ion rings around a solid ion dot, like a trail's end.
+  const uint16_t ion = rgb565(ION);
+  tft.drawCircle(tx, ty, 12, rgb565(LINE_STRONG));
+  tft.drawCircle(tx, ty, 7, ion);
+  tft.fillCircle(tx, ty, 3, ion);
 }
 
 bool performCalibration() {
@@ -242,7 +247,7 @@ void runPendingCalibration() {
 void begin() {
   tft.init();
   tft.setRotation(1);
-  tft.fillScreen(TFT_BLACK);
+  tft.fillScreen(rgb565(UiTheme::VOID));
 
   // Take the backlight off TFT_eSPI's plain digitalWrite so the first frame can
   // fade up instead of flashing a half-drawn screen at the user.
@@ -278,15 +283,15 @@ void begin() {
   indevDrv.read_cb = touchReadCb;
   lv_indev_drv_register(&indevDrv);
 
-  // Seed LVGL's own dark theme with our accent so stock widgets (the switch,
-  // the tab indicator) land in the same palette as the custom styles.
-  lv_disp_set_theme(disp, lv_theme_default_init(disp, col(ACCENT), col(ACCENT_LT), true,
-                                                &lv_font_montserrat_14));
+  // Seed LVGL's own dark theme with the brand colours so stock widgets land in
+  // the same palette as the custom styles.
+  lv_disp_set_theme(disp, lv_theme_default_init(disp, col(ION), col(PHOSPHOR), true,
+                                                &at_sans_14));
 
   UiTheme::init();
   UiScreens::build();
   UiScreens::sync(0);
-  UiScreens::showSplash(SPLASH_MS);
+  UiScreens::showSplash(LOGO_SPLASH_MS);
 
   lv_timer_handler();  // paint the splash before the backlight comes up
   for (int duty = 0; duty <= 255; duty += 15) {

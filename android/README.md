@@ -17,6 +17,17 @@ in `../include/ble.h`.
    ```
    The APK lands in `app/build/outputs/apk/debug/`.
 
+## Look and feel
+
+The app uses the Alien Trails Labs design system (see
+[`../brand/`](../brand/README.md)): void ground, Space Grotesk and Space Mono,
+phosphor for what is live, and the dotted ion trail as the brightness slider.
+On launch the Alien Trails Labs logo shows for about 2.5 seconds, then fades
+to the controls. With system animations turned off it shows the end state with
+no motion. The theme lives in `ui/theme/Theme.kt`; shared pieces (SignalTag,
+TrailSlider, ModeGrid, buttons) in `ui/AtComponents.kt`; the boot card in
+`ui/BrandSplash.kt`.
+
 ## Use
 
 1. Flash the firmware (`pio run -e xiao_s3 -t upload` from the repo root) —

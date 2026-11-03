@@ -7,6 +7,8 @@
       `setColor(r, g, b)` call, and a hue picker/presets to match the CYD UI.
 - [ ] Show the current colour from the state notification.
 - [ ] Update `android/README.md` protocol table with `SET_COLOR`.
+- [ ] Build the Alien Trails redesign in Android Studio and check it on a
+      phone: launch splash timing, the trail slider drag, adaptive icon.
 
 ## Firmware
 
@@ -20,6 +22,8 @@
 
 - [ ] Test on hardware end to end: touch calibration, all nine modes, colour
       ring, BLE link indicator.
+- [ ] Check the Alien Trails splash and Space Grotesk/Mono rendering on the
+      real panel (RGB565 dithering on the logo, colour order of the TFT).
 - [ ] Document the CYD pinout (strip, mic) with a diagram like the XIAO one.
 
 ## Housekeeping
