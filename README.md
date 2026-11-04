@@ -163,8 +163,9 @@ wears the Alien Trails Labs identity (see [`brand/`](brand/README.md)):
   any tab. Both are adjusted mid-ride, so neither hides behind a tab. Brightness
   is a dotted phosphor-to-ion trail ending in the draggable ion signal dot;
   speed is a quiet ion bar, because the trail is spent once per view.
-- **Modes** — the sixteen patterns as a 4x4 grid; the live one is tinted
-  phosphor.
+- **Modes** — the sixteen patterns, three to a row; the live one is tinted
+  phosphor. The grid is taller than the page, so this tab scrolls vertically.
+  Cells are sized for a gloved thumb rather than to fit on one screen.
 - **Colour** — a hue ring with the current colour and its hex in the middle,
   plus twelve presets including a warm and a neutral white.
 - **Strip** — the wiring that used to need a reflash: colour order

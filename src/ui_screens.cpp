@@ -322,18 +322,39 @@ void buildControlsRow(lv_obj_t *parent) {
 }
 
 void buildModesPage(lv_obj_t *page) {
-  // Sixteen modes in a 4x4 grid. Anything taller would need the page to
-  // scroll, and a resistive panel under a gloved thumb is a poor thing to ask
-  // to scroll and then hit a target.
-  constexpr lv_coord_t cols = 4;
+  // Sixteen modes, three to a row. Three columns rather than four because the
+  // width was the tight dimension, not the height: "Heartbeat" and "Slow
+  // blink" ran to the cell edges at 69px. At 94x40 a gloved thumb has a real
+  // target, which is worth more here than seeing every mode at once.
+  constexpr lv_coord_t cols = 3;
   constexpr lv_coord_t gap = 6;
-  // Four rows of four at 27px leaves 2px top and bottom inside PAGE_H's 122,
-  // so the grid fills the page without the rows needing to be computed from it.
   constexpr lv_coord_t top = 2;
-  constexpr lv_coord_t rowGap = 4;
+  constexpr lv_coord_t rowGap = 6;
   constexpr lv_coord_t cellW = (SCREEN_W - 2 * PAD - (cols - 1) * gap) / cols;
-  constexpr lv_coord_t cellH = 27;
-  static_assert(top + 4 * cellH + 3 * rowGap <= PAGE_H, "modes grid overflows page");
+  constexpr lv_coord_t cellH = 40;
+  constexpr int rows = (MODE_COUNT + cols - 1) / cols;
+  constexpr lv_coord_t gridH = top + rows * cellH + (rows - 1) * rowGap;
+
+  // The longest mode name at at_sans_14 needs about 80px inside the cell.
+  static_assert(cellW >= 90, "mode cells too narrow for the longest mode name");
+  // If this ever fails the grid fits again and the scrolling below is dead weight.
+  static_assert(gridH > PAGE_H, "modes grid now fits the page; drop the scrolling");
+
+  // The one page that scrolls, and vertically only: a sideways drag on a
+  // resistive panel is too easy to produce by accident while aiming for a
+  // button. preparePage() cleared the flag, so this re-arms it for Modes alone.
+  lv_obj_add_flag(page, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_scroll_dir(page, LV_DIR_VER);
+  lv_obj_set_style_pad_bottom(page, top, 0);
+
+  // A thin ion bar, always shown rather than on-scroll: on a 122px window
+  // holding 272px of grid, the only cue that there is more is the bar itself.
+  lv_obj_set_scrollbar_mode(page, LV_SCROLLBAR_MODE_ON);
+  lv_obj_set_style_width(page, 3, LV_PART_SCROLLBAR);
+  lv_obj_set_style_pad_right(page, 2, LV_PART_SCROLLBAR);
+  lv_obj_set_style_radius(page, LV_RADIUS_CIRCLE, LV_PART_SCROLLBAR);
+  lv_obj_set_style_bg_color(page, col(ION), LV_PART_SCROLLBAR);
+  lv_obj_set_style_bg_opa(page, LV_OPA_40, LV_PART_SCROLLBAR);
 
   for (int i = 0; i < MODE_COUNT; i++) {
     const lv_coord_t cx = PAD + (i % cols) * (cellW + gap);
