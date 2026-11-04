@@ -23,6 +23,7 @@ uint8_t lastSpeed = 0xFF;
 uint8_t lastOrder = 0xFF;
 uint16_t lastCount = 0xFFFF;
 uint16_t lastMaxMa = 0xFFFF;
+uint16_t lastSkip = 0xFFFF;
 
 void rememberCurrent() {
   lastMode = Leds::mode();
@@ -33,6 +34,7 @@ void rememberCurrent() {
   lastOrder = Leds::order();
   lastCount = Leds::count();
   lastMaxMa = Leds::maxMilliamps();
+  lastSkip = Leds::skip();
 }
 
 bool changed() {
@@ -41,7 +43,8 @@ bool changed() {
   return Leds::mode() != lastMode || Leds::brightness() != lastBri ||
          Leds::on() != lastOn || r != lastR || g != lastG || b != lastB ||
          Leds::speed() != lastSpeed || Leds::order() != lastOrder ||
-         Leds::count() != lastCount || Leds::maxMilliamps() != lastMaxMa;
+         Leds::count() != lastCount || Leds::maxMilliamps() != lastMaxMa ||
+         Leds::skip() != lastSkip;
 }
 
 }  // namespace
@@ -58,6 +61,8 @@ void begin() {
   Leds::setOrder(prefs.getUChar("order", LED_ORDER_DEFAULT));
   Leds::setCount(prefs.getUShort("count", LED_COUNT));
   Leds::setMaxMilliamps(prefs.getUShort("maxma", LED_MAX_MA));
+  // After setCount: the skip is clamped against the strip length.
+  Leds::setSkip(prefs.getUShort("skip", LED_SKIP));
 
   rememberCurrent();
 }
@@ -87,6 +92,7 @@ void loop() {
   prefs.putUChar("order", lastOrder);
   prefs.putUShort("count", lastCount);
   prefs.putUShort("maxma", lastMaxMa);
+  prefs.putUShort("skip", lastSkip);
   dirty = false;
 }
 

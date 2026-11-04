@@ -43,6 +43,7 @@ uint8_t sSpeed = SPEED_DEFAULT;
 uint8_t sOrder = LED_ORDER_DEFAULT;
 uint16_t sCount = LED_COUNT;
 uint16_t sMaxMa = LED_MAX_MA;
+uint16_t sSkip = LED_SKIP;
 
 const char *kNames[MODE_COUNT] = {
     "Solid",   "Breathe", "Heartbeat", "Slow blink", "Fast blink", "Strobe",
@@ -70,10 +71,15 @@ void setSpeed(uint8_t v) { sSpeed = v; }
 void setOrder(uint8_t v) { sOrder = v; }
 void setCount(uint16_t v) { sCount = v; }
 void setMaxMilliamps(uint16_t v) { sMaxMa = v; }
+void setSkip(uint16_t v) {
+  sSkip = v > (uint16_t)(sCount - 1u) ? (uint16_t)(sCount - 1u) : v;
+}
 uint8_t speed() { return sSpeed; }
 uint8_t order() { return sOrder; }
 uint16_t count() { return sCount; }
 uint16_t maxMilliamps() { return sMaxMa; }
+uint16_t skip() { return sSkip; }
+uint16_t lit() { return (uint16_t)(sCount - sSkip); }
 const char *orderName() { return kOrderNames[sOrder]; }
 const char *orderNameAt(uint8_t i) { return i < ORDER_COUNT ? kOrderNames[i] : ""; }
 uint8_t brightnessPercent() { return (uint8_t)((sBri * 100u) / 255u); }

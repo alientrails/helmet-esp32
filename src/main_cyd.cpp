@@ -41,6 +41,14 @@ void setup() {
 
   Leds::begin();
   Persist::begin();
+
+  // After Persist, so this reports the geometry actually in force rather than
+  // the compile-time defaults printed above -- which is the only way to tell
+  // from the log whether a saved skip or count survived the update.
+  Serial.printf("strip: %u px  %u hidden  %u lit  %u mA  %s\n",
+                (unsigned)Leds::count(), (unsigned)Leds::skip(),
+                (unsigned)Leds::lit(), (unsigned)Leds::maxMilliamps(),
+                Leds::orderName());
   UiTouch::begin();
   Ble::begin();
 }

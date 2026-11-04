@@ -79,6 +79,15 @@
 #define LED_MAX_MA 500
 #define LED_MAX_MA_MIN 100
 #define LED_MAX_MA_MAX 2000
+
+// Pixels at the head of the strip that sit inside the shell and are never
+// seen. Patterns are laid out across the pixels that remain, so the visible
+// run carries a whole comet or rainbow rather than one with its first inches
+// buried. Adjustable from the Strip tab and saved, because how much of the
+// reel vanishes inside the shell is something you measure by eye once the
+// helmet is assembled.
+#define LED_SKIP 7
+#define LED_SKIP_MAX 32
 #define BRIGHTNESS_DEFAULT 220
 #define BRIGHTNESS_STEP 8
 #define BRIGHTNESS_MIN 8

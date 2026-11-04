@@ -43,6 +43,8 @@ lv_obj_t *countSlider = nullptr;
 lv_obj_t *countValue = nullptr;
 lv_obj_t *maxMaSlider = nullptr;
 lv_obj_t *maxMaValue = nullptr;
+lv_obj_t *skipSlider = nullptr;
+lv_obj_t *skipValue = nullptr;
 lv_obj_t *sysBleValue = nullptr;
 lv_obj_t *sysUptimeValue = nullptr;
 
@@ -57,6 +59,8 @@ uint8_t shownSpeed = 0xFF;
 uint8_t shownOrder = 0xFF;
 uint16_t shownCount = 0xFFFF;
 uint16_t shownMaxMa = 0xFFFF;
+uint16_t shownSkip = 0xFFFF;
+uint16_t shownLit = 0xFFFF;
 bool shownOn = false;
 uint8_t shownR = 0, shownG = 0, shownB = 0;
 bool shownColorValid = false;
@@ -100,6 +104,10 @@ void onOrderPressed(lv_event_t *e) {
 
 void onCountChanged(lv_event_t *e) {
   Leds::setCount((uint16_t)lv_slider_get_value(lv_event_get_target(e)));
+}
+
+void onSkipChanged(lv_event_t *e) {
+  Leds::setSkip((uint16_t)lv_slider_get_value(lv_event_get_target(e)));
 }
 
 void onMaxMaChanged(lv_event_t *e) {
@@ -321,6 +329,25 @@ void buildControlsRow(lv_obj_t *parent) {
                                  SPEED_MIN, 255, onSpeedChanged, &speedValue);
 }
 
+// Turns a tab page into a vertical scroller with the brand's thin ion bar.
+// Vertical only: a sideways drag on a resistive panel is too easy to produce
+// by accident while aiming for a control. preparePage() clears the flag, so
+// this re-arms it for the pages whose content outgrows PAGE_H.
+void makeScrollable(lv_obj_t *page, lv_coord_t padBottom) {
+  lv_obj_add_flag(page, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_scroll_dir(page, LV_DIR_VER);
+  lv_obj_set_style_pad_bottom(page, padBottom, 0);
+
+  // Always shown rather than on-scroll: in a window this short the bar is the
+  // only standing cue that there is more below.
+  lv_obj_set_scrollbar_mode(page, LV_SCROLLBAR_MODE_ON);
+  lv_obj_set_style_width(page, 3, LV_PART_SCROLLBAR);
+  lv_obj_set_style_pad_right(page, 2, LV_PART_SCROLLBAR);
+  lv_obj_set_style_radius(page, LV_RADIUS_CIRCLE, LV_PART_SCROLLBAR);
+  lv_obj_set_style_bg_color(page, col(ION), LV_PART_SCROLLBAR);
+  lv_obj_set_style_bg_opa(page, LV_OPA_40, LV_PART_SCROLLBAR);
+}
+
 void buildModesPage(lv_obj_t *page) {
   // Sixteen modes, three to a row. Three columns rather than four because the
   // width was the tight dimension, not the height: "Heartbeat" and "Slow
@@ -340,21 +367,7 @@ void buildModesPage(lv_obj_t *page) {
   // If this ever fails the grid fits again and the scrolling below is dead weight.
   static_assert(gridH > PAGE_H, "modes grid now fits the page; drop the scrolling");
 
-  // The one page that scrolls, and vertically only: a sideways drag on a
-  // resistive panel is too easy to produce by accident while aiming for a
-  // button. preparePage() cleared the flag, so this re-arms it for Modes alone.
-  lv_obj_add_flag(page, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_scroll_dir(page, LV_DIR_VER);
-  lv_obj_set_style_pad_bottom(page, top, 0);
-
-  // A thin ion bar, always shown rather than on-scroll: on a 122px window
-  // holding 272px of grid, the only cue that there is more is the bar itself.
-  lv_obj_set_scrollbar_mode(page, LV_SCROLLBAR_MODE_ON);
-  lv_obj_set_style_width(page, 3, LV_PART_SCROLLBAR);
-  lv_obj_set_style_pad_right(page, 2, LV_PART_SCROLLBAR);
-  lv_obj_set_style_radius(page, LV_RADIUS_CIRCLE, LV_PART_SCROLLBAR);
-  lv_obj_set_style_bg_color(page, col(ION), LV_PART_SCROLLBAR);
-  lv_obj_set_style_bg_opa(page, LV_OPA_40, LV_PART_SCROLLBAR);
+  makeScrollable(page, top);
 
   for (int i = 0; i < MODE_COUNT; i++) {
     const lv_coord_t cx = PAD + (i % cols) * (cellW + gap);
@@ -489,11 +502,18 @@ void buildStripPage(lv_obj_t *page) {
   constexpr lv_coord_t inset = PAD + 2;
   constexpr lv_coord_t blockW = SCREEN_W - 2 * inset;
 
+  // HIDDEN sits with PIXELS because the two together describe the geometry of
+  // the strip; the current budget is a separate concern and goes last.
   countSlider = buildSliderBlock(page, inset, 48, blockW, "PIXELS", 1,
                                  LED_COUNT_MAX, onCountChanged, &countValue);
+  skipSlider = buildSliderBlock(page, inset, 86, blockW, "HIDDEN", 0,
+                                LED_SKIP_MAX, onSkipChanged, &skipValue);
   maxMaSlider =
-      buildSliderBlock(page, inset, 86, blockW, "CURRENT BUDGET", LED_MAX_MA_MIN,
+      buildSliderBlock(page, inset, 124, blockW, "CURRENT BUDGET", LED_MAX_MA_MIN,
                        LED_MAX_MA_MAX, onMaxMaChanged, &maxMaValue);
+
+  // Three slider blocks and the order row no longer fit in PAGE_H.
+  makeScrollable(page, 8);
 }
 
 // One "Label ........ reading" row plus the hairline under it. Labels are
@@ -869,6 +889,23 @@ void sync(uint32_t uptimeSec) {
     snprintf(buf, sizeof(buf), "%u px", (unsigned)count);
     lv_label_set_text(countValue, buf);
     shownCount = count;
+  }
+
+  // Paired with lit() so the reading answers "and how many are left?" without
+  // the arithmetic -- that is the number you are actually watching while you
+  // slide this.
+  const uint16_t skip = Leds::skip();
+  const uint16_t litCount = Leds::lit();
+  if (skip != shownSkip || litCount != shownLit) {
+    if (!lv_obj_has_state(skipSlider, LV_STATE_PRESSED)) {
+      lv_slider_set_value(skipSlider, skip, LV_ANIM_OFF);
+    }
+    char buf[20];
+    snprintf(buf, sizeof(buf), "%u \xC2\xB7 %u lit", (unsigned)skip,
+             (unsigned)litCount);
+    lv_label_set_text(skipValue, buf);
+    shownSkip = skip;
+    shownLit = litCount;
   }
 
   const uint16_t maxMa = Leds::maxMilliamps();

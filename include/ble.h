@@ -15,8 +15,10 @@
 //   0x08 SET_ORDER       value = wire colour order (see LedOrder)
 //   0x09 SET_COUNT       value = pixels, 1..LED_COUNT_MAX
 //   0x0A SET_MAX_MA      value = current budget in tens of mA (50 = 500 mA)
-// State (read/notify) 7b1e8f02-...: 11 bytes
-//   [mode, brightness, on, outputLevel, r, g, b, speed, order, count, maxMa/10]
+//   0x0B SET_SKIP        value = hidden pixels at the head, 0..LED_SKIP_MAX
+// State (read/notify) 7b1e8f02-...: 12 bytes
+//   [mode, brightness, on, outputLevel, r, g, b, speed, order, count,
+//    maxMa/10, skip]
 //
 // The state payload only ever grows at the end, so a client that reads the
 // first four bytes and stops keeps working across firmware updates.

@@ -24,6 +24,13 @@ uint8_t gSpeed = SPEED_DEFAULT;
 uint8_t gOrder = LED_ORDER_DEFAULT;
 uint16_t gCount = LED_COUNT;
 uint16_t gMaxMa = LED_MAX_MA;
+
+// The head of the strip disappears inside the shell, so those pixels are never
+// painted by a pattern. gLit is the canvas that is left -- held in a variable
+// rather than subtracted in every per-pixel loop, and kept in step with gCount
+// and gSkip by relit().
+uint16_t gSkip = LED_SKIP;
+uint16_t gLit = LED_COUNT - LED_SKIP;
 bool gStarted = false;
 
 // Scaled animation clock, in milliseconds-at-1x. Every pattern is a pure
@@ -198,7 +205,7 @@ uint8_t bassDuty() {
 // --------------------------------------------------------------------------
 // Per-pixel patterns
 //
-// All of these are pure functions of gPhase and gCount — nothing accumulates
+// All of these are pure functions of gPhase and gLit — nothing accumulates
 // between frames. That keeps them identical whether the loop is running at
 // 500 Hz with the lights idle or crawling while BLE reconnects, and it is why
 // the speed control can be a plain multiplier on the clock.
@@ -211,22 +218,22 @@ void tint(uint16_t i, uint8_t level) {
 }
 
 void renderComet() {
-  const uint16_t span = gCount * kSub;
+  const uint16_t span = gLit * kSub;
   const uint16_t head = (uint16_t)((gPhase / 4u) % span);
   const uint16_t tail = 10u * kSub;
-  for (uint16_t i = 0; i < gCount; i++) {
+  for (uint16_t i = 0; i < gLit; i++) {
     const uint16_t d = (uint16_t)((head + span - i * kSub) % span);
     tint(i, d < tail ? (uint8_t)(255u - (d * 255u) / tail) : 0);
   }
 }
 
 void renderScanner() {
-  const uint16_t span = gCount * kSub;
+  const uint16_t span = gLit * kSub;
   const uint16_t period = (uint16_t)(span * 2u);
   const uint16_t t = (uint16_t)((gPhase / 4u) % period);
   const uint16_t head = t < span ? t : (uint16_t)(period - 1u - t);
   const uint16_t tail = 4u * kSub;
-  for (uint16_t i = 0; i < gCount; i++) {
+  for (uint16_t i = 0; i < gLit; i++) {
     const uint16_t p = (uint16_t)(i * kSub);
     const uint16_t d = p > head ? (uint16_t)(p - head) : (uint16_t)(head - p);
     tint(i, d < tail ? (uint8_t)(255u - (d * 255u) / tail) : 0);
@@ -234,7 +241,7 @@ void renderScanner() {
 }
 
 void renderTwinkle() {
-  for (uint16_t i = 0; i < gCount; i++) {
+  for (uint16_t i = 0; i < gLit; i++) {
     const uint8_t seed = hash8(i);
     const uint8_t rate = (uint8_t)(6u + (seed & 7u));
     // Reduced mod 96*256 first so the uint8 wrap stays continuous forever
@@ -248,27 +255,27 @@ void renderTwinkle() {
 }
 
 void renderFire() {
-  for (uint16_t i = 0; i < gCount; i++) {
+  for (uint16_t i = 0; i < gLit; i++) {
     // inoise8's lattice wraps at 65536, so the rolling y coordinate can run off
     // the end of a uint16 without a seam.
     const uint8_t n = inoise8((uint16_t)(i * 70u), (uint16_t)(gPhase / 2u));
-    const uint8_t cool = (uint8_t)(((uint32_t)i * 200u) / gCount);
+    const uint8_t cool = (uint8_t)(((uint32_t)i * 200u) / gLit);
     gPixels[i] = HeatColor(qsub8(scale8(n, 220), cool));
   }
 }
 
 void renderRainbow() {
-  const uint8_t delta = gCount > 1 ? (uint8_t)(255u / gCount) : 0;
-  fill_rainbow(gPixels, (int)gCount, (uint8_t)((gPhase / 40u) & 0xFFu),
+  const uint8_t delta = gLit > 1 ? (uint8_t)(255u / gLit) : 0;
+  fill_rainbow(gPixels, (int)gLit, (uint8_t)((gPhase / 40u) & 0xFFu),
                delta > 0 ? delta : 1);
 }
 
 void renderWipe() {
-  const uint16_t span = gCount * kSub;
+  const uint16_t span = gLit * kSub;
   const uint16_t t = (uint16_t)((gPhase / 6u) % (uint16_t)(span * 2u));
   const bool filling = t < span;
   const uint16_t edge = filling ? t : (uint16_t)(t - span);
-  for (uint16_t i = 0; i < gCount; i++) {
+  for (uint16_t i = 0; i < gLit; i++) {
     const bool below = (uint16_t)(i * kSub) < edge;
     gPixels[i] = (below == filling) ? gColor : CRGB::Black;
   }
@@ -276,7 +283,7 @@ void renderWipe() {
 
 void renderChase() {
   const uint8_t step = (uint8_t)((gPhase / 110u) % 3u);
-  for (uint16_t i = 0; i < gCount; i++) {
+  for (uint16_t i = 0; i < gLit; i++) {
     gPixels[i] = ((i + step) % 3u == 0u) ? gColor : CRGB::Black;
   }
 }
@@ -292,17 +299,17 @@ void renderStrip(uint8_t level) {
 
   switch (gMode) {
     case MODE_PARTY:
-      fill_rainbow(gPixels, (int)gCount, (uint8_t)((gPhase / 12u) & 0xFFu), 7);
+      fill_rainbow(gPixels, (int)gLit, (uint8_t)((gPhase / 12u) & 0xFFu), 7);
       break;
     case MODE_BASS: {
       CRGB c = CHSV(192, 255, 255);
       if (level > 210) {
         c = CRGB::White;
       }
-      fill_solid(gPixels, gCount, c);
-      nscale8(gPixels, gCount, level);
-      const uint16_t lit = ((uint16_t)level * gCount) / 255u;
-      for (uint16_t i = lit; i < gCount; i++) {
+      fill_solid(gPixels, gLit, c);
+      nscale8(gPixels, gLit, level);
+      const uint16_t lit = ((uint16_t)level * gLit) / 255u;
+      for (uint16_t i = lit; i < gLit; i++) {
         gPixels[i].nscale8_video(40);
       }
       break;
@@ -331,7 +338,7 @@ void renderStrip(uint8_t level) {
     default: {
       CRGB c = gColor;
       c.nscale8_video(level);
-      fill_solid(gPixels, gCount, c);
+      fill_solid(gPixels, gLit, c);
       break;
     }
   }
@@ -339,16 +346,35 @@ void renderStrip(uint8_t level) {
   // Pixels past the configured length are not wired up. They are not clocked
   // out either, but keeping them black means shortening the strip can never
   // leave a stale tail lit.
-  if (gCount < LED_COUNT_MAX) {
-    fill_solid(gPixels + gCount, LED_COUNT_MAX - gCount, CRGB::Black);
+  if (gLit < LED_COUNT_MAX) {
+    fill_solid(gPixels + gLit, LED_COUNT_MAX - gLit, CRGB::Black);
   }
+}
+
+// Keeps gSkip and gLit consistent with gCount. Always leaves one pixel lit:
+// a fully skipped strip looks exactly like a dead one.
+void relit() {
+  if (gSkip > (uint16_t)(gCount - 1u)) {
+    gSkip = (uint16_t)(gCount - 1u);
+  }
+  gLit = (uint16_t)(gCount - gSkip);
 }
 
 void writeWire() {
   const uint8_t *map = kOrderMap[gOrder];
-  for (uint16_t i = 0; i < gCount; i++) {
+
+  // The buried head is never painted, so blank it here rather than trusting it
+  // to be black already -- otherwise raising the skip would strand whatever
+  // those pixels were showing a frame earlier.
+  if (gSkip > 0) {
+    fill_solid(leds, gSkip, CRGB::Black);
+  }
+
+  // Logical pixel 0 is the first one anybody can see, so the canvas lands at
+  // gSkip. gSkip + gLit == gCount, so this never runs past the strip.
+  for (uint16_t i = 0; i < gLit; i++) {
     const uint8_t *src = gPixels[i].raw;
-    uint8_t *dst = leds[i].raw;
+    uint8_t *dst = leds[i + gSkip].raw;
     dst[0] = src[map[0]];
     dst[1] = src[map[1]];
     dst[2] = src[map[2]];
@@ -434,11 +460,21 @@ void setCount(uint16_t count) {
     count = LED_COUNT_MAX;
   }
   gCount = count;
+  // A shorter strip can leave the skip longer than the strip itself.
+  relit();
   if (gStarted) {
     // Keeps FastLED's power estimate and frame time honest about how much
     // strip is actually attached.
     FastLED[0].setLeds(leds, (int)gCount);
   }
+}
+
+void setSkip(uint16_t skip) {
+  if (skip > LED_SKIP_MAX) {
+    skip = LED_SKIP_MAX;
+  }
+  gSkip = skip;
+  relit();
 }
 
 void setMaxMilliamps(uint16_t milliamps) {
@@ -474,6 +510,8 @@ uint8_t speed() { return gSpeed; }
 uint8_t order() { return gOrder; }
 uint16_t count() { return gCount; }
 uint16_t maxMilliamps() { return gMaxMa; }
+uint16_t skip() { return gSkip; }
+uint16_t lit() { return gLit; }
 const char *modeName() { return kNames[gMode]; }
 const char *modeNameAt(uint8_t index) {
   return index < MODE_COUNT ? kNames[index] : "";

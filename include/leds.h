@@ -60,13 +60,21 @@ void setOrder(uint8_t order);
 void setCount(uint16_t count);
 void setMaxMilliamps(uint16_t milliamps);
 
+// Pixels at the head of the strip to leave dark because they are buried in the
+// shell. Patterns are drawn across the lit() pixels that follow, so raising
+// this shortens the canvas rather than blanking part of the picture. Clamped
+// to leave at least one pixel lit.
+void setSkip(uint16_t skip);
+
 uint8_t mode();
 uint8_t brightness();
 bool on();
 uint8_t speed();
 uint8_t order();
-uint16_t count();
+uint16_t count();      // pixels wired to the strip, hidden ones included
 uint16_t maxMilliamps();
+uint16_t skip();       // hidden pixels at the head
+uint16_t lit();        // count() - skip(): the canvas a pattern is drawn on
 const char *modeName();
 const char *modeNameAt(uint8_t index);
 const char *orderName();

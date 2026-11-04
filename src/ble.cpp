@@ -24,6 +24,7 @@ enum Opcode : uint8_t {
   OP_SET_ORDER = 0x08,
   OP_SET_COUNT = 0x09,
   OP_SET_MAX_MA = 0x0A,
+  OP_SET_SKIP = 0x0B,
 };
 
 NimBLEServer *gServer = nullptr;
@@ -40,6 +41,7 @@ uint8_t gLastSpeed = 0xFF;
 uint8_t gLastOrder = 0xFF;
 uint16_t gLastCount = 0xFFFF;
 uint16_t gLastMaxMa = 0xFFFF;
+uint16_t gLastSkip = 0xFFFF;
 
 void applyControl(const uint8_t *data, size_t len) {
   if (len < 1) {
@@ -84,6 +86,9 @@ void applyControl(const uint8_t *data, size_t len) {
       // value slot every other opcode uses.
       Leds::setMaxMilliamps((uint16_t)value * 10u);
       break;
+    case OP_SET_SKIP:
+      Leds::setSkip(value);
+      break;
     default:
       return;
   }
@@ -117,11 +122,12 @@ void pushState(bool force) {
   const uint8_t order = Leds::order();
   const uint16_t count = Leds::count();
   const uint16_t maxMa = Leds::maxMilliamps();
+  const uint16_t skip = Leds::skip();
 
   if (!force && mode == gLastMode && bri == gLastBri && on == gLastOn &&
       level == gLastLevel && r == gLastR && g == gLastG && b == gLastB &&
       speed == gLastSpeed && order == gLastOrder && count == gLastCount &&
-      maxMa == gLastMaxMa) {
+      maxMa == gLastMaxMa && skip == gLastSkip) {
     return;
   }
   gLastMode = mode;
@@ -135,11 +141,15 @@ void pushState(bool force) {
   gLastOrder = order;
   gLastCount = count;
   gLastMaxMa = maxMa;
+  gLastSkip = skip;
 
-  const uint8_t payload[11] = {mode,  bri,   (uint8_t)(on ? 1 : 0),
+  // Appended at the end, which the state contract above guarantees is safe
+  // for a client that stops reading early.
+  const uint8_t payload[12] = {mode,  bri,   (uint8_t)(on ? 1 : 0),
                                level, r,     g,
                                b,     speed, order,
-                               (uint8_t)count, (uint8_t)(maxMa / 10u)};
+                               (uint8_t)count, (uint8_t)(maxMa / 10u),
+                               (uint8_t)skip};
   gStateChar->setValue(payload, sizeof(payload));
   gStateChar->notify();
 }

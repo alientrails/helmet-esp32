@@ -30,6 +30,12 @@
 - [ ] Check the seven new patterns on a real strip — they were verified for
       arithmetic (no overflow at 1..120 px, heads reach both ends) but never
       actually looked at. Fire and Twinkle in particular are tuned by eye.
+- [ ] Check the hidden-LED skip on a real strip — the host preview stubs out
+      `Leds`, so `writeWire()` has never actually run. Confirm the first
+      LED_SKIP pixels stay dark and that a comet sweeps the whole visible arc
+      rather than vanishing early, then set HIDDEN by eye on the assembled
+      helmet. The boot log line (`strip: ... hidden ... lit`) reports what is
+      in force.
 - [ ] Document the CYD pinout (strip, mic) with a diagram like the XIAO one.
 
 ## Housekeeping
