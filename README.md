@@ -114,13 +114,23 @@ Hold **BOOT**, tap **RST**, release BOOT, then upload. Merged images
 | Long-press select | home, or toggle from home |
 
 Modes: Solid, Breathe, Heartbeat, Slow blink, Fast blink, Strobe, SOS,
-Party (rainbow), **Bass** (purple kick meter).
+Party (fast rainbow), **Bass** (purple kick meter), Comet, Scanner (Cylon
+sweep), Twinkle, Fire, Rainbow (one spectrum across the strip, drifting),
+Wipe and Chase.
+
+Comet, Scanner, Twinkle, Wipe and Chase are painted in the colour you pick;
+Party, Rainbow and Fire bring their own palette.
+
+Every animated mode runs off a scaled clock, so the **Speed** control stretches
+time from an eighth to just under double without changing what a pattern looks
+like. It is on the CYD's header row, and over BLE as opcode `0x07`.
 
 **Bass** uses the MAX9814 on D0. Brightness is output gain. MAX9814 GAIN
 floating = 50 dB; to 3V3 = 40 dB (loud club); to GND = 60 dB (quiet).
 
-If colors look swapped (red/green), the strip is not GRB — say so and we
-can switch the color order.
+If colors look swapped (red/green), the strip is not GRB. On the CYD, pick the
+right order on the **Strip** tab; on the XIAO builds, change
+`LED_ORDER_DEFAULT` in `include/config.h`.
 
 If the OLED is upside down, set `OLED_ROTATION` to `2` in `include/config.h`.
 
@@ -149,11 +159,17 @@ wears the Alien Trails Labs identity (see [`brand/`](brand/README.md)):
   advertising, `LINK` disc when a phone is connected) and the power switch.
   A hairline meter underneath shows the live PWM level in the strip's own
   colour, so you can see a pattern running without looking up.
-- **Brightness** — always visible: a dotted phosphor-to-ion trail that ends in
-  the draggable ion signal dot.
-- **Modes** — the nine patterns as a 3x3 grid; the live one is tinted phosphor.
+- **Brightness and Speed** — side by side, always visible, and reachable from
+  any tab. Both are adjusted mid-ride, so neither hides behind a tab. Brightness
+  is a dotted phosphor-to-ion trail ending in the draggable ion signal dot;
+  speed is a quiet ion bar, because the trail is spent once per view.
+- **Modes** — the sixteen patterns as a 4x4 grid; the live one is tinted
+  phosphor.
 - **Colour** — a hue ring with the current colour and its hex in the middle,
   plus twelve presets including a warm and a neutral white.
+- **Strip** — the wiring that used to need a reflash: colour order
+  (GRB/RGB/BRG/RBG/GBR/BGR), pixel count up to `LED_COUNT_MAX`, and the
+  current budget FastLED holds the strip to. All saved to NVS.
 - **System** — firmware, strip, BLE and uptime, and a touch recalibration
   button.
 
@@ -172,7 +188,7 @@ make -C tools/sim
 ./tools/sim/build/preview /tmp/shots
 ```
 
-That writes one PPM per frame (the boot splash timeline, Modes, Colour,
+That writes one PPM per frame (the boot splash timeline, Modes, Colour, Strip,
 System). Handy for
 iterating on spacing and colour without a flash cycle.
 

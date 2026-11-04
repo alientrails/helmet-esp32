@@ -14,8 +14,10 @@ static void handleSerial() {
   if (c == 's' || c == 'S') {
     uint8_t r, g, b;
     Leds::color(&r, &g, &b);
-    Serial.printf("on=%d mode=%s bri=%u color=%u,%u,%u\n", Leds::on(),
-                  Leds::modeName(), Leds::brightness(), r, g, b);
+    Serial.printf("on=%d mode=%s bri=%u color=%u,%u,%u speed=%u%% %s %upx %umA\n",
+                  Leds::on(), Leds::modeName(), Leds::brightness(), r, g, b,
+                  Leds::speedPercent(), Leds::orderName(), Leds::count(),
+                  Leds::maxMilliamps());
   } else if (c == 'm' || c == 'M') {
     Serial.printf("mic pin %d raw:", PIN_MIC);
     for (int i = 0; i < 20; i++) {
@@ -34,8 +36,8 @@ void setup() {
   Serial.begin(115200);
   delay(200);
   Serial.printf("\nhelmet-esp32 %s  CYD  touchscreen\n", HELMET_FW_VERSION);
-  Serial.printf("WS2812 GPIO%d  count %d  mic GPIO%d\n", PIN_LED_DATA, LED_COUNT,
-                PIN_MIC);
+  Serial.printf("WS2812 GPIO%d  count %d  max %d  mic GPIO%d\n", PIN_LED_DATA,
+                LED_COUNT, LED_COUNT_MAX, PIN_MIC);
 
   Leds::begin();
   Persist::begin();

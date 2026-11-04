@@ -12,9 +12,10 @@
 // Layout, 320x240 landscape, Alien Trails Labs Void theme:
 //   0..38    top bar    — mark, running mode, BLE signal tag, power switch
 //   38..40   pulse      — live PWM output, painted in the strip's own colour
-//   40..84   brightness — LABEL eyebrow, reading, and the trail slider
-//   84..206  tab pages  — Modes (3x3) / Colour (ring + presets) / System
-//   206..240 tab bar    — MODES · COLOUR · SYSTEM
+//   40..84   controls   — brightness (the trail) and speed, side by side
+//   84..206  tab pages  — Modes (4x4) / Colour (ring + presets) /
+//                         Strip (wiring + power) / System
+//   206..240 tab bar    — MODES · COLOUR · STRIP · SYSTEM
 
 namespace UiScreens {
 namespace {
@@ -30,10 +31,18 @@ lv_obj_t *powerSwitch = nullptr;
 lv_obj_t *pulseBar = nullptr;
 lv_obj_t *briSlider = nullptr;
 lv_obj_t *briValue = nullptr;
+lv_obj_t *speedSlider = nullptr;
+lv_obj_t *speedValue = nullptr;
 lv_obj_t *modeBtn[MODE_COUNT] = {nullptr};
 lv_obj_t *wheel = nullptr;
 lv_obj_t *wheelDot = nullptr;
 lv_obj_t *wheelHex = nullptr;
+lv_obj_t *orderBtn[ORDER_COUNT] = {nullptr};
+lv_obj_t *orderBtnLabel[ORDER_COUNT] = {nullptr};
+lv_obj_t *countSlider = nullptr;
+lv_obj_t *countValue = nullptr;
+lv_obj_t *maxMaSlider = nullptr;
+lv_obj_t *maxMaValue = nullptr;
 lv_obj_t *sysBleValue = nullptr;
 lv_obj_t *sysUptimeValue = nullptr;
 
@@ -44,6 +53,10 @@ bool calibrationRequested = false;
 // state behind our back, which is exactly what this catches.
 uint8_t shownMode = 0xFF;
 uint8_t shownBri = 0xFF;
+uint8_t shownSpeed = 0xFF;
+uint8_t shownOrder = 0xFF;
+uint16_t shownCount = 0xFFFF;
+uint16_t shownMaxMa = 0xFFFF;
 bool shownOn = false;
 uint8_t shownR = 0, shownG = 0, shownB = 0;
 bool shownColorValid = false;
@@ -75,6 +88,25 @@ void onPowerToggled(lv_event_t *e) {
 
 void onBrightnessChanged(lv_event_t *e) {
   Leds::setBrightness((uint8_t)lv_slider_get_value(lv_event_get_target(e)));
+}
+
+void onSpeedChanged(lv_event_t *e) {
+  Leds::setSpeed((uint8_t)lv_slider_get_value(lv_event_get_target(e)));
+}
+
+void onOrderPressed(lv_event_t *e) {
+  Leds::setOrder((uint8_t)(uintptr_t)lv_event_get_user_data(e));
+}
+
+void onCountChanged(lv_event_t *e) {
+  Leds::setCount((uint16_t)lv_slider_get_value(lv_event_get_target(e)));
+}
+
+void onMaxMaChanged(lv_event_t *e) {
+  // Snapped to 50 mA: the slider is 1900 mA wide over 296 px, so raw values
+  // would jitter by tens of milliamps between repaints and read as noise.
+  const int32_t v = lv_slider_get_value(lv_event_get_target(e));
+  Leds::setMaxMilliamps((uint16_t)((v / 50) * 50));
 }
 
 void onModePressed(lv_event_t *e) {
@@ -207,55 +239,105 @@ void buildTopBar(lv_obj_t *parent) {
   lv_obj_set_style_bg_opa(pulseBar, LV_OPA_COVER, LV_PART_INDICATOR);
 }
 
-void buildBrightnessRow(lv_obj_t *parent) {
+// A labelled slider: eyebrow on the left, live value on the right, track
+// underneath. Brightness, speed, pixel count and the current budget are all the
+// same control at different scales, so they are all built from this.
+//
+// `trail` swaps the plain track for the brand's dotted phosphor-to-ion trail.
+// House rule 3 spends that once per view, so brightness gets it and every other
+// slider stays a quiet ion bar.
+constexpr lv_coord_t SLIDER_BLOCK_H = 38;
+
+lv_obj_t *buildSliderBlock(lv_obj_t *parent, lv_coord_t x, lv_coord_t y,
+                           lv_coord_t w, const char *title, int32_t lo, int32_t hi,
+                           lv_event_cb_t cb, lv_obj_t **valueOut,
+                           bool trail = false) {
+  lv_obj_t *block = slab(parent, x, y, w, SLIDER_BLOCK_H);
+
+  eyebrow(block, title, 0, 3);
+
+  // Readings are instrument output, so Mono.
+  lv_obj_t *value = lv_label_create(block);
+  lv_label_set_text(value, "");
+  lv_obj_set_style_text_font(value, &at_mono_13, 0);
+  lv_obj_set_style_text_color(value, col(INK), 0);
+  lv_obj_align(value, LV_ALIGN_TOP_RIGHT, 0, 0);
+  *valueOut = value;
+
+  lv_obj_t *slider = lv_slider_create(block);
+  lv_obj_remove_style_all(slider);
+  lv_obj_set_pos(slider, 0, 24);
+  lv_obj_set_size(slider, w, trail ? 12 : 8);
+  lv_slider_set_range(slider, lo, hi);
+  lv_obj_set_ext_click_area(slider, 14);  // a thin track is not a touch target
+
+  if (trail) {
+    // The trail paints its own track, so both bar parts stay transparent.
+    lv_obj_add_event_cb(slider, onTrailDraw, LV_EVENT_DRAW_MAIN_BEGIN, nullptr);
+  } else {
+    lv_obj_set_style_radius(slider, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(slider, col(LINE_STRONG), 0);
+    lv_obj_set_style_bg_opa(slider, LV_OPA_COVER, 0);
+
+    lv_obj_set_style_radius(slider, LV_RADIUS_CIRCLE, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_opa(slider, LV_OPA_COVER, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(slider, col(ION), LV_PART_INDICATOR);
+  }
+
+  // Knob: ion, circular. The ion glow is kept for the trail, because a glow is
+  // light leaking from something live and brightness is the only one that is.
+  lv_obj_set_style_radius(slider, LV_RADIUS_CIRCLE, LV_PART_KNOB);
+  lv_obj_set_style_bg_opa(slider, LV_OPA_COVER, LV_PART_KNOB);
+  lv_obj_set_style_bg_color(slider, col(ION), LV_PART_KNOB);
+  lv_obj_set_style_pad_all(slider, trail ? 1 : 4, LV_PART_KNOB);
+  if (trail) {
+    lv_obj_set_style_shadow_width(slider, 14, LV_PART_KNOB);
+    lv_obj_set_style_shadow_spread(slider, 1, LV_PART_KNOB);
+    lv_obj_set_style_shadow_color(slider, col(ION), LV_PART_KNOB);
+    lv_obj_set_style_shadow_opa(slider, LV_OPA_50, LV_PART_KNOB);
+  }
+  lv_obj_set_style_outline_width(slider, 2, LV_PART_KNOB | LV_STATE_PRESSED);
+  lv_obj_set_style_outline_pad(slider, 2, LV_PART_KNOB | LV_STATE_PRESSED);
+  lv_obj_set_style_outline_color(slider, col(ION), LV_PART_KNOB | LV_STATE_PRESSED);
+  lv_obj_set_style_outline_opa(slider, LV_OPA_COVER, LV_PART_KNOB | LV_STATE_PRESSED);
+
+  lv_obj_add_event_cb(slider, cb, LV_EVENT_VALUE_CHANGED, nullptr);
+  return slider;
+}
+
+// Brightness and speed share the header row. Both are adjusted mid-ride with
+// the helmet on someone's head, so they stay one touch away on every tab
+// rather than living behind the Modes grid.
+void buildControlsRow(lv_obj_t *parent) {
   lv_obj_t *row = slab(parent, 0, BRIGHT_TOP, SCREEN_W, BRIGHT_H);
 
-  eyebrow(row, "BRIGHTNESS", PAD, 8);
+  constexpr lv_coord_t inset = PAD + 2;
+  constexpr lv_coord_t colGap = 14;
+  constexpr lv_coord_t colW = (SCREEN_W - 2 * inset - colGap) / 2;
 
-  briValue = lv_label_create(row);
-  lv_label_set_text(briValue, "");
-  lv_obj_set_style_text_font(briValue, &at_mono_13, 0);
-  lv_obj_set_style_text_color(briValue, col(INK), 0);
-  lv_obj_align(briValue, LV_ALIGN_TOP_RIGHT, -PAD, 5);
-
-  // Inset by half the knob so the end dot never clips the screen edge.
-  constexpr lv_coord_t inset = PAD + 4;
-  briSlider = lv_slider_create(row);
-  lv_obj_remove_style_all(briSlider);
-  lv_obj_set_pos(briSlider, inset, 26);
-  lv_obj_set_size(briSlider, SCREEN_W - 2 * inset, 12);
-  lv_slider_set_range(briSlider, BRIGHTNESS_MIN, 255);
-  lv_obj_set_ext_click_area(briSlider, 14);  // 12px of track is not a target
-  lv_obj_add_event_cb(briSlider, onTrailDraw, LV_EVENT_DRAW_MAIN_BEGIN, nullptr);
-
-  // The trail's end dot: ion, with the ion glow. Light leaking from something
-  // live is the only glow the brand allows.
-  lv_obj_set_style_radius(briSlider, LV_RADIUS_CIRCLE, LV_PART_KNOB);
-  lv_obj_set_style_bg_opa(briSlider, LV_OPA_COVER, LV_PART_KNOB);
-  lv_obj_set_style_bg_color(briSlider, col(ION), LV_PART_KNOB);
-  lv_obj_set_style_pad_all(briSlider, 1, LV_PART_KNOB);
-  lv_obj_set_style_shadow_width(briSlider, 14, LV_PART_KNOB);
-  lv_obj_set_style_shadow_spread(briSlider, 1, LV_PART_KNOB);
-  lv_obj_set_style_shadow_color(briSlider, col(ION), LV_PART_KNOB);
-  lv_obj_set_style_shadow_opa(briSlider, LV_OPA_50, LV_PART_KNOB);
-  lv_obj_set_style_outline_width(briSlider, 2, LV_PART_KNOB | LV_STATE_PRESSED);
-  lv_obj_set_style_outline_pad(briSlider, 2, LV_PART_KNOB | LV_STATE_PRESSED);
-  lv_obj_set_style_outline_color(briSlider, col(ION), LV_PART_KNOB | LV_STATE_PRESSED);
-  lv_obj_set_style_outline_opa(briSlider, LV_OPA_COVER, LV_PART_KNOB | LV_STATE_PRESSED);
-
-  lv_obj_add_event_cb(briSlider, onBrightnessChanged, LV_EVENT_VALUE_CHANGED, nullptr);
+  briSlider = buildSliderBlock(row, inset, 0, colW, "BRIGHTNESS", BRIGHTNESS_MIN,
+                               255, onBrightnessChanged, &briValue, /*trail=*/true);
+  speedSlider = buildSliderBlock(row, inset + colW + colGap, 0, colW, "SPEED",
+                                 SPEED_MIN, 255, onSpeedChanged, &speedValue);
 }
 
 void buildModesPage(lv_obj_t *page) {
-  constexpr lv_coord_t cols = 3;
+  // Sixteen modes in a 4x4 grid. Anything taller would need the page to
+  // scroll, and a resistive panel under a gloved thumb is a poor thing to ask
+  // to scroll and then hit a target.
+  constexpr lv_coord_t cols = 4;
   constexpr lv_coord_t gap = 6;
-  constexpr lv_coord_t top = 6;
+  // Four rows of four at 27px leaves 2px top and bottom inside PAGE_H's 122,
+  // so the grid fills the page without the rows needing to be computed from it.
+  constexpr lv_coord_t top = 2;
+  constexpr lv_coord_t rowGap = 4;
   constexpr lv_coord_t cellW = (SCREEN_W - 2 * PAD - (cols - 1) * gap) / cols;
-  constexpr lv_coord_t cellH = (PAGE_H - 2 * top - 2 * gap) / 3;
+  constexpr lv_coord_t cellH = 27;
+  static_assert(top + 4 * cellH + 3 * rowGap <= PAGE_H, "modes grid overflows page");
 
   for (int i = 0; i < MODE_COUNT; i++) {
     const lv_coord_t cx = PAD + (i % cols) * (cellW + gap);
-    const lv_coord_t cy = top + (i / cols) * (cellH + gap);
+    const lv_coord_t cy = top + (i / cols) * (cellH + rowGap);
 
     lv_obj_t *btn = lv_obj_create(page);
     lv_obj_remove_style_all(btn);
@@ -348,6 +430,51 @@ void buildColorPage(lv_obj_t *page) {
   }
 }
 
+// The strip's own wiring and power budget. These used to be #defines that
+// needed a reflash; a re-cut strip or a clone reel with a different channel
+// order is exactly the sort of thing you discover once the helmet is already
+// assembled.
+void buildStripPage(lv_obj_t *page) {
+  eyebrow(page, "COLOUR ORDER", PAD + 2, 0);
+
+  constexpr lv_coord_t swGap = 4;
+  constexpr lv_coord_t swW =
+      (SCREEN_W - 2 * PAD - (ORDER_COUNT - 1) * swGap) / ORDER_COUNT;
+  constexpr lv_coord_t swH = 26;
+  constexpr lv_coord_t swX0 =
+      (SCREEN_W - (ORDER_COUNT * swW + (ORDER_COUNT - 1) * swGap)) / 2;
+
+  for (int i = 0; i < ORDER_COUNT; i++) {
+    lv_obj_t *btn = lv_obj_create(page);
+    lv_obj_remove_style_all(btn);
+    lv_obj_set_pos(btn, swX0 + i * (swW + swGap), 16);
+    lv_obj_set_size(btn, swW, swH);
+    lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_style(btn, &styleCard, 0);
+    lv_obj_add_style(btn, &styleCardPressed, LV_STATE_PRESSED);
+    lv_obj_add_style(btn, &styleCardChecked, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(btn, onOrderPressed, LV_EVENT_CLICKED, (void *)(uintptr_t)i);
+
+    lv_obj_t *label = lv_label_create(btn);
+    lv_label_set_text(label, Leds::orderNameAt((uint8_t)i));
+    lv_obj_set_style_text_font(label, &at_mono_11, 0);
+    lv_obj_center(label);
+
+    orderBtn[i] = btn;
+    orderBtnLabel[i] = label;
+  }
+
+  constexpr lv_coord_t inset = PAD + 2;
+  constexpr lv_coord_t blockW = SCREEN_W - 2 * inset;
+
+  countSlider = buildSliderBlock(page, inset, 48, blockW, "PIXELS", 1,
+                                 LED_COUNT_MAX, onCountChanged, &countValue);
+  maxMaSlider =
+      buildSliderBlock(page, inset, 86, blockW, "CURRENT BUDGET", LED_MAX_MA_MIN,
+                       LED_MAX_MA_MAX, onMaxMaChanged, &maxMaValue);
+}
+
 // One "Label ........ reading" row plus the hairline under it. Labels are
 // prose (Grotesk), readings are instrument output (Mono).
 lv_obj_t *buildInfoRow(lv_obj_t *page, const char *label, const char *value,
@@ -371,8 +498,10 @@ lv_obj_t *buildInfoRow(lv_obj_t *page, const char *label, const char *value,
 }
 
 void buildSystemPage(lv_obj_t *page) {
-  char hw[40];
-  snprintf(hw, sizeof(hw), "%d px \xC2\xB7 GPIO%d", LED_COUNT, PIN_LED_DATA);
+  // U+00B7 rather than LV_SYMBOL_BULLET: the brand fonts carry ASCII plus a
+  // middle dot, em dash and degree, and none of LVGL's symbol glyphs.
+  char hw[48];
+  snprintf(hw, sizeof(hw), "GPIO%d \xC2\xB7 max %d px", PIN_LED_DATA, LED_COUNT_MAX);
 
   buildInfoRow(page, "Firmware", "v" HELMET_FW_VERSION, 6, true);
   buildInfoRow(page, "LED strip", hw, 29, true);
@@ -533,7 +662,7 @@ void build() {
   lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
   buildTopBar(scr);
-  buildBrightnessRow(scr);
+  buildControlsRow(scr);
 
   tabview = lv_tabview_create(scr, LV_DIR_BOTTOM, TABBAR_H);
   lv_obj_set_pos(tabview, 0, TABVIEW_TOP);
@@ -548,13 +677,16 @@ void build() {
 
   lv_obj_t *modesPage = lv_tabview_add_tab(tabview, "MODES");
   lv_obj_t *colorPage = lv_tabview_add_tab(tabview, "COLOUR");
+  lv_obj_t *stripPage = lv_tabview_add_tab(tabview, "STRIP");
   lv_obj_t *systemPage = lv_tabview_add_tab(tabview, "SYSTEM");
   preparePage(modesPage);
   preparePage(colorPage);
+  preparePage(stripPage);
   preparePage(systemPage);
 
   buildModesPage(modesPage);
   buildColorPage(colorPage);
+  buildStripPage(stripPage);
   buildSystemPage(systemPage);
 }
 
@@ -679,6 +811,54 @@ void sync(uint32_t uptimeSec) {
     snprintf(pct, sizeof(pct), "%u%%", Leds::brightnessPercent());
     lv_label_set_text(briValue, pct);
     shownBri = bri;
+  }
+
+  const uint8_t speed = Leds::speed();
+  if (speed != shownSpeed) {
+    if (!lv_obj_has_state(speedSlider, LV_STATE_PRESSED)) {
+      lv_slider_set_value(speedSlider, speed, LV_ANIM_OFF);
+    }
+    char pct[8];
+    snprintf(pct, sizeof(pct), "%u%%", Leds::speedPercent());
+    lv_label_set_text(speedValue, pct);
+    shownSpeed = speed;
+  }
+
+  const uint8_t order = Leds::order();
+  if (order != shownOrder) {
+    for (int i = 0; i < ORDER_COUNT; i++) {
+      const bool active = (i == order);
+      if (active) {
+        lv_obj_add_state(orderBtn[i], LV_STATE_CHECKED);
+      } else {
+        lv_obj_clear_state(orderBtn[i], LV_STATE_CHECKED);
+      }
+      lv_obj_set_style_text_color(orderBtnLabel[i],
+                                  active ? col(PHOSPHOR) : col(INK_MUTED), 0);
+    }
+    shownOrder = order;
+  }
+
+  const uint16_t count = Leds::count();
+  if (count != shownCount) {
+    if (!lv_obj_has_state(countSlider, LV_STATE_PRESSED)) {
+      lv_slider_set_value(countSlider, count, LV_ANIM_OFF);
+    }
+    char buf[12];
+    snprintf(buf, sizeof(buf), "%u px", (unsigned)count);
+    lv_label_set_text(countValue, buf);
+    shownCount = count;
+  }
+
+  const uint16_t maxMa = Leds::maxMilliamps();
+  if (maxMa != shownMaxMa) {
+    if (!lv_obj_has_state(maxMaSlider, LV_STATE_PRESSED)) {
+      lv_slider_set_value(maxMaSlider, maxMa, LV_ANIM_OFF);
+    }
+    char buf[12];
+    snprintf(buf, sizeof(buf), "%u mA", (unsigned)maxMa);
+    lv_label_set_text(maxMaValue, buf);
+    shownMaxMa = maxMa;
   }
 
   uint8_t r, g, b;

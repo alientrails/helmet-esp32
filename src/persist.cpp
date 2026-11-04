@@ -19,12 +19,29 @@ bool lastOn = true;
 uint8_t lastR = 0xFF;
 uint8_t lastG = 0xFF;
 uint8_t lastB = 0xFF;
+uint8_t lastSpeed = 0xFF;
+uint8_t lastOrder = 0xFF;
+uint16_t lastCount = 0xFFFF;
+uint16_t lastMaxMa = 0xFFFF;
 
 void rememberCurrent() {
   lastMode = Leds::mode();
   lastBri = Leds::brightness();
   lastOn = Leds::on();
   Leds::color(&lastR, &lastG, &lastB);
+  lastSpeed = Leds::speed();
+  lastOrder = Leds::order();
+  lastCount = Leds::count();
+  lastMaxMa = Leds::maxMilliamps();
+}
+
+bool changed() {
+  uint8_t r, g, b;
+  Leds::color(&r, &g, &b);
+  return Leds::mode() != lastMode || Leds::brightness() != lastBri ||
+         Leds::on() != lastOn || r != lastR || g != lastG || b != lastB ||
+         Leds::speed() != lastSpeed || Leds::order() != lastOrder ||
+         Leds::count() != lastCount || Leds::maxMilliamps() != lastMaxMa;
 }
 
 }  // namespace
@@ -37,6 +54,10 @@ void begin() {
   Leds::setOn(prefs.getBool("on", true));
   Leds::setColor(prefs.getUChar("r", 255), prefs.getUChar("g", 255),
                  prefs.getUChar("b", 255));
+  Leds::setSpeed(prefs.getUChar("speed", SPEED_DEFAULT));
+  Leds::setOrder(prefs.getUChar("order", LED_ORDER_DEFAULT));
+  Leds::setCount(prefs.getUShort("count", LED_COUNT));
+  Leds::setMaxMilliamps(prefs.getUShort("maxma", LED_MAX_MA));
 
   rememberCurrent();
 }
@@ -47,15 +68,8 @@ void markDirty() {
 }
 
 void loop() {
-  if (Leds::mode() != lastMode || Leds::brightness() != lastBri ||
-      Leds::on() != lastOn) {
+  if (changed()) {
     markDirty();
-  } else {
-    uint8_t r, g, b;
-    Leds::color(&r, &g, &b);
-    if (r != lastR || g != lastG || b != lastB) {
-      markDirty();
-    }
   }
 
   if (!dirty || (millis() - dirtyAt) < 600) {
@@ -69,6 +83,10 @@ void loop() {
   prefs.putUChar("r", lastR);
   prefs.putUChar("g", lastG);
   prefs.putUChar("b", lastB);
+  prefs.putUChar("speed", lastSpeed);
+  prefs.putUChar("order", lastOrder);
+  prefs.putUShort("count", lastCount);
+  prefs.putUShort("maxma", lastMaxMa);
   dirty = false;
 }
 

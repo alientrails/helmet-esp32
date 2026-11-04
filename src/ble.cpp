@@ -20,6 +20,10 @@ enum Opcode : uint8_t {
   OP_TOGGLE = 0x04,
   OP_NUDGE_BRIGHTNESS = 0x05,
   OP_SET_COLOR = 0x06,
+  OP_SET_SPEED = 0x07,
+  OP_SET_ORDER = 0x08,
+  OP_SET_COUNT = 0x09,
+  OP_SET_MAX_MA = 0x0A,
 };
 
 NimBLEServer *gServer = nullptr;
@@ -32,6 +36,10 @@ uint8_t gLastLevel = 0xFF;
 uint8_t gLastR = 0xFF;
 uint8_t gLastG = 0xFF;
 uint8_t gLastB = 0xFF;
+uint8_t gLastSpeed = 0xFF;
+uint8_t gLastOrder = 0xFF;
+uint16_t gLastCount = 0xFFFF;
+uint16_t gLastMaxMa = 0xFFFF;
 
 void applyControl(const uint8_t *data, size_t len) {
   if (len < 1) {
@@ -62,6 +70,20 @@ void applyControl(const uint8_t *data, size_t len) {
       }
       Leds::setColor(data[1], data[2], data[3]);
       break;
+    case OP_SET_SPEED:
+      Leds::setSpeed(value);
+      break;
+    case OP_SET_ORDER:
+      Leds::setOrder(value);
+      break;
+    case OP_SET_COUNT:
+      Leds::setCount(value);
+      break;
+    case OP_SET_MAX_MA:
+      // Sent in tens of mA so the whole budget still fits in the one-byte
+      // value slot every other opcode uses.
+      Leds::setMaxMilliamps((uint16_t)value * 10u);
+      break;
     default:
       return;
   }
@@ -91,9 +113,15 @@ void pushState(bool force) {
   const uint8_t level = Leds::outputLevel();
   uint8_t r, g, b;
   Leds::color(&r, &g, &b);
+  const uint8_t speed = Leds::speed();
+  const uint8_t order = Leds::order();
+  const uint16_t count = Leds::count();
+  const uint16_t maxMa = Leds::maxMilliamps();
 
   if (!force && mode == gLastMode && bri == gLastBri && on == gLastOn &&
-      level == gLastLevel && r == gLastR && g == gLastG && b == gLastB) {
+      level == gLastLevel && r == gLastR && g == gLastG && b == gLastB &&
+      speed == gLastSpeed && order == gLastOrder && count == gLastCount &&
+      maxMa == gLastMaxMa) {
     return;
   }
   gLastMode = mode;
@@ -103,8 +131,15 @@ void pushState(bool force) {
   gLastR = r;
   gLastG = g;
   gLastB = b;
+  gLastSpeed = speed;
+  gLastOrder = order;
+  gLastCount = count;
+  gLastMaxMa = maxMa;
 
-  const uint8_t payload[7] = {mode, bri, (uint8_t)(on ? 1 : 0), level, r, g, b};
+  const uint8_t payload[11] = {mode,  bri,   (uint8_t)(on ? 1 : 0),
+                               level, r,     g,
+                               b,     speed, order,
+                               (uint8_t)count, (uint8_t)(maxMa / 10u)};
   gStateChar->setValue(payload, sizeof(payload));
   gStateChar->notify();
 }

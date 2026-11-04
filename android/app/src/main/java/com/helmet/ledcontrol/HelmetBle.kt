@@ -35,10 +35,17 @@ object HelmetProtocol {
     const val OP_SET_ON: Byte = 0x03
     const val OP_TOGGLE: Byte = 0x04
     const val OP_NUDGE_BRIGHTNESS: Byte = 0x05
+    const val OP_SET_COLOR: Byte = 0x06
+    const val OP_SET_SPEED: Byte = 0x07
+    const val OP_SET_ORDER: Byte = 0x08
+    const val OP_SET_COUNT: Byte = 0x09
+    const val OP_SET_MAX_MA: Byte = 0x0A
 
+    // Index order matters: it is what goes over the wire. Append only.
     val MODE_NAMES = listOf(
         "Solid", "Breathe", "Heartbeat", "Slow blink",
         "Fast blink", "Strobe", "SOS", "Party", "Bass",
+        "Comet", "Scanner", "Twinkle", "Fire", "Rainbow", "Wipe", "Chase",
     )
 }
 
@@ -49,6 +56,7 @@ data class HelmetState(
     val brightness: Int = 0,
     val on: Boolean = true,
     val outputLevel: Int = 0,
+    val speed: Int = 128,
 )
 
 @SuppressLint("MissingPermission")
@@ -239,6 +247,8 @@ class HelmetBle(context: Context) {
             brightness = value[1].toInt() and 0xFF,
             on = value[2].toInt() != 0,
             outputLevel = value[3].toInt() and 0xFF,
+            // Older firmware stops after outputLevel; keep its default.
+            speed = if (value.size >= 8) value[7].toInt() and 0xFF else _state.value.speed,
         )
     }
 

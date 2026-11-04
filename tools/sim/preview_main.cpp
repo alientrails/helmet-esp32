@@ -39,10 +39,17 @@ bool sOn = true;
 uint8_t sR = 0x00, sG = 0xA8, sB = 0xFF;
 uint8_t sLevel = 190;
 bool sBleConnected = false;
+uint8_t sSpeed = SPEED_DEFAULT;
+uint8_t sOrder = LED_ORDER_DEFAULT;
+uint16_t sCount = LED_COUNT;
+uint16_t sMaxMa = LED_MAX_MA;
 
-const char *kNames[MODE_COUNT] = {"Solid",      "Breathe", "Heartbeat", "Slow blink",
-                                  "Fast blink", "Strobe",  "SOS",       "Party",
-                                  "Bass"};
+const char *kNames[MODE_COUNT] = {
+    "Solid",   "Breathe", "Heartbeat", "Slow blink", "Fast blink", "Strobe",
+    "SOS",     "Party",   "Bass",      "Comet",      "Scanner",    "Twinkle",
+    "Fire",    "Rainbow", "Wipe",      "Chase"};
+
+const char *kOrderNames[ORDER_COUNT] = {"GRB", "RGB", "BRG", "RBG", "GBR", "BGR"};
 }  // namespace
 
 namespace Leds {
@@ -59,7 +66,18 @@ uint8_t brightness() { return sBri; }
 bool on() { return sOn; }
 const char *modeName() { return kNames[sMode]; }
 const char *modeNameAt(uint8_t i) { return i < MODE_COUNT ? kNames[i] : ""; }
+void setSpeed(uint8_t v) { sSpeed = v; }
+void setOrder(uint8_t v) { sOrder = v; }
+void setCount(uint16_t v) { sCount = v; }
+void setMaxMilliamps(uint16_t v) { sMaxMa = v; }
+uint8_t speed() { return sSpeed; }
+uint8_t order() { return sOrder; }
+uint16_t count() { return sCount; }
+uint16_t maxMilliamps() { return sMaxMa; }
+const char *orderName() { return kOrderNames[sOrder]; }
+const char *orderNameAt(uint8_t i) { return i < ORDER_COUNT ? kOrderNames[i] : ""; }
 uint8_t brightnessPercent() { return (uint8_t)((sBri * 100u) / 255u); }
+uint8_t speedPercent() { return (uint8_t)(((uint16_t)sSpeed * 100u) / SPEED_NORMAL); }
 uint8_t outputLevel() { return sLevel; }
 void color(uint8_t *r, uint8_t *g, uint8_t *b) {
   *r = sR;
@@ -175,10 +193,14 @@ int main(int argc, char **argv) {
   capture(outDir, "3-colour");
 
   UiScreens::showTab(2);
+  advance(200);
+  capture(outDir, "4-strip");
+
+  UiScreens::showTab(3);
   sBleConnected = true;
   UiScreens::sync(4337);
   advance(200);
-  capture(outDir, "4-system");
+  capture(outDir, "5-system");
 
   // Off, dimmed, warm white — the other end of the state space.
   UiScreens::showTab(0);
@@ -190,7 +212,7 @@ int main(int argc, char **argv) {
   sB = 0x8A;
   UiScreens::sync(4337);
   advance(300);
-  capture(outDir, "5-modes-off");
+  capture(outDir, "6-modes-off");
 
   return 0;
 }

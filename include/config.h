@@ -2,7 +2,7 @@
 
 // Helmet LED controller — Seeed XIAO ESP32, USB power bank, 0.91" OLED.
 
-#define HELMET_FW_VERSION "1.5.0"
+#define HELMET_FW_VERSION "1.6.0"
 
 // 0.91" modules are almost always SSD1306 128x32 at 0x3C.
 // If the screen is blank, try 0x3D. If you actually have a 0.96" 128x64,
@@ -69,11 +69,31 @@
 
 // Cut the BTF WS2812B reel to helmet length. Count pixels and set this.
 // 60/m × 1 m ≈ 60 LEDs. Do not run the full 5 m / 300 px off USB.
+//
+// LED_COUNT and LED_MAX_MA are only the power-on defaults now: both are
+// adjustable from the CYD's Strip tab and saved, so a re-cut strip does not
+// need a reflash. LED_COUNT_MAX sizes the pixel buffers and is the one real
+// compile-time limit.
 #define LED_COUNT 60
+#define LED_COUNT_MAX 120
 #define LED_MAX_MA 500
+#define LED_MAX_MA_MIN 100
+#define LED_MAX_MA_MAX 2000
 #define BRIGHTNESS_DEFAULT 220
 #define BRIGHTNESS_STEP 8
 #define BRIGHTNESS_MIN 8
+
+// Wire order of the strip, as a LedOrder value. 0 = GRB, which is what almost
+// every WS2812B reel wants. Changeable at runtime; this is just the default.
+#define LED_ORDER_DEFAULT 0
+
+// Animation rate, as a fraction of SPEED_NORMAL. The patterns run off a clock
+// scaled by speed/SPEED_NORMAL, so 64 is half time and 255 is just under 2x.
+// The floor is deliberately above zero: at 0 every pattern would freeze, which
+// looks exactly like a crash.
+#define SPEED_NORMAL 128
+#define SPEED_DEFAULT SPEED_NORMAL
+#define SPEED_MIN 16
 
 #define DEBOUNCE_MS 25
 #define LONG_PRESS_MS 650
