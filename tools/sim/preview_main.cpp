@@ -8,10 +8,14 @@
 //
 //   make -C tools/sim && tools/sim/build/preview out/
 
+#include <errno.h>
 #include <lvgl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+
+#include <string>
 
 #include "ble.h"
 #include "config.h"
@@ -155,10 +159,35 @@ void capture(const char *dir, const char *name) {
   printf("wrote %s\n", path);
 }
 
+// Creates outDir and any parent it needs. The documented invocation points at
+// ../../.tmp/preview, which is gitignored and so never exists on a fresh
+// checkout; without this the run dies on the first frame with "cannot write".
+bool makeDirs(const char *path) {
+  std::string acc;
+  for (const char *p = path;; p++) {
+    if (*p == '/' || *p == '\0') {
+      if (!acc.empty() && acc != "." && acc != "..") {
+        if (mkdir(acc.c_str(), 0755) != 0 && errno != EEXIST) {
+          return false;
+        }
+      }
+    }
+    if (*p == '\0') break;
+    acc.push_back(*p);
+  }
+  return true;
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
   const char *outDir = argc > 1 ? argv[1] : ".";
+
+  if (!makeDirs(outDir)) {
+    fprintf(stderr, "cannot create output directory %s: %s\n", outDir,
+            strerror(errno));
+    return 1;
+  }
 
   lv_init();
   lv_disp_draw_buf_init(&gDrawBuf, gDrawPixels, NULL, W * H);
