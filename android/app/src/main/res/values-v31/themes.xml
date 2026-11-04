@@ -1,0 +1,12 @@
+<resources>
+    <!-- Android 12+ always shows a system splash. Make it the mark on void so it
+         hands straight over to the in-app logo card instead of showing a
+         generic icon first. -->
+    <style name="Theme.HelmetLED" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/at_void</item>
+        <item name="android:navigationBarColor">@color/at_void</item>
+        <item name="android:statusBarColor">@color/at_void</item>
+        <item name="android:windowSplashScreenBackground">@color/at_void</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+    </style>
+</resources>

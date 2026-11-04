@@ -17,9 +17,11 @@ CXXFLAGS := -O1 -Wall -Wextra -Wno-unused-parameter
 
 LVGL_SRC := $(shell find $(LVGL)/src -name '*.c')
 APP_SRC  := $(ROOT)/src/ui_screens.cpp $(ROOT)/src/ui_theme.cpp $(HERE)preview_main.cpp
+BRAND_SRC := $(wildcard $(ROOT)/src/brand/*.c)
 
 LVGL_OBJ := $(patsubst $(LVGL)/%.c,$(BUILD)/lvgl/%.o,$(LVGL_SRC))
-APP_OBJ  := $(addprefix $(BUILD)/app/,$(notdir $(APP_SRC:.cpp=.o)))
+APP_OBJ  := $(addprefix $(BUILD)/app/,$(notdir $(APP_SRC:.cpp=.o))) \
+            $(addprefix $(BUILD)/brand/,$(notdir $(BRAND_SRC:.c=.o)))
 
 all: $(BUILD)/preview
 
@@ -28,6 +30,10 @@ $(BUILD)/preview: $(LVGL_OBJ) $(APP_OBJ)
 	$(CXX) -o $@ $^ -lm
 
 $(BUILD)/lvgl/%.o: $(LVGL)/%.c
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
+
+$(BUILD)/brand/%.o: $(ROOT)/src/brand/%.c
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
 

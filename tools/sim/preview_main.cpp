@@ -14,6 +14,7 @@
 #include <string.h>
 
 #include "ble.h"
+#include "config.h"
 #include "leds.h"
 #include "ui_screens.h"
 #include "ui_theme.h"
@@ -144,19 +145,25 @@ int main(int argc, char **argv) {
   gDispDrv.draw_buf = &gDrawBuf;
   lv_disp_t *disp = lv_disp_drv_register(&gDispDrv);
 
-  lv_disp_set_theme(disp, lv_theme_default_init(disp, UiTheme::col(UiTheme::ACCENT),
-                                                UiTheme::col(UiTheme::ACCENT_LT), true,
-                                                &lv_font_montserrat_14));
+  lv_disp_set_theme(disp, lv_theme_default_init(disp, UiTheme::col(UiTheme::ION),
+                                                UiTheme::col(UiTheme::PHOSPHOR), true,
+                                                &at_sans_14));
 
   UiTheme::init();
   UiScreens::build();
   UiScreens::sync(0);
-  UiScreens::showSplash(1200);
+  UiScreens::showSplash(LOGO_SPLASH_MS);
 
-  advance(300);
+  // The boot timeline: the mark pops, the wordmark follows, the status line
+  // types out, then the card holds and fades to the controls.
+  advance(200);
+  capture(outDir, "0a-splash-pop");
+  advance(800);
+  capture(outDir, "0b-splash-typing");
+  advance(1000);
   capture(outDir, "1-splash");
 
-  advance(2000);  // let the splash hold, fade and delete itself
+  advance(LOGO_SPLASH_MS);  // let the splash hold, fade and delete itself
 
   UiScreens::showTab(0);
   UiScreens::sync(97);
