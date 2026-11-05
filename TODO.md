@@ -2,12 +2,9 @@
 
 ## Android app
 
-- [ ] **Build it.** Version 1.1 was written without a compiler pass: speed,
-      colour, bass (with the live meter), strip settings and a GATT queue are
-      all new, none of it has been through Gradle. Run
-      `./gradlew testDebugUnitTest assembleDebug` in `android/` and fix
-      whatever it finds; the unit tests pin the byte layout to the firmware.
-- [ ] Check it on a phone against 1.7.0 firmware: the boot card (mark pops in
+- [x] **Build it.** It compiled clean on the first pass with no source
+      changes; 17 protocol unit tests now pass and the debug APK builds.
+- [ ] Check it on a phone against the firmware: the boot card (mark pops in
       from a bare void, no mark in the system splash first), the trail and ion
       slider drags, the hue ring, and the bass meter moving in Bass mode.
 - [ ] Check it against older firmware too: sections the helmet does not
@@ -27,7 +24,30 @@
       same values as `analogRead()`.
 - [ ] The BLE state is exactly 20 bytes now, the most one notification carries
       at the default MTU. The next field needs the central to negotiate a
-      larger MTU, or a characteristic of its own like the bass meter.
+      larger MTU, or a characteristic of its own like the bass meter. This is
+      why the Bass rainbow went in as a flag bit rather than a new BassParam.
+- [ ] `fastled/FastLED@^3.9.13` resolves to 3.10.9, whose ESP32-C3 PARLIO
+      driver does not link: `pio run -e xiao_c3` fails with undefined
+      references to `fl::detail::ParlioEngine` inside FastLED itself. The cyd
+      and xiao_s3 builds are fine. Pinning the version exactly would fix it,
+      but it changes what every board builds against, so it wants testing on
+      hardware rather than a blind bump.
+
+## Firmware update (OTA)
+
+- [ ] **One USB upload per helmet.** The CYD moved from `huge_app` to
+      `min_spiffs` for its second app slot, and a partition change cannot
+      arrive over the air. Flash each helmet once over USB on 1.9.0 or newer,
+      and after that the app can do it.
+- [ ] Try a real update end to end, including the things that should fail
+      safely: cancel halfway, walk out of range halfway, and send a file that
+      is not firmware. All three should leave the helmet on its old image.
+- [ ] Time a full image over BLE and see whether the 32 KB window and the
+      250 ms progress interval are the right numbers on real hardware.
+- [ ] There is no automatic rollback: Arduino's stock bootloader does not
+      enable the IDF's, so an image that is intact but broken still needs a
+      USB recovery. Worth considering `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`
+      if updates become routine.
 
 ## CYD build
 

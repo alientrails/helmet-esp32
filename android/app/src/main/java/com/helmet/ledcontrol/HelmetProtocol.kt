@@ -17,6 +17,8 @@ object HelmetProtocol {
     val CONTROL_UUID: UUID = UUID.fromString("7b1e8f01-2a5d-4e1a-9c3a-2f6b1d8a10e0")
     val STATE_UUID: UUID = UUID.fromString("7b1e8f02-2a5d-4e1a-9c3a-2f6b1d8a10e0")
     val METER_UUID: UUID = UUID.fromString("7b1e8f03-2a5d-4e1a-9c3a-2f6b1d8a10e0")
+    val OTA_CTRL_UUID: UUID = UUID.fromString("7b1e8f04-2a5d-4e1a-9c3a-2f6b1d8a10e0")
+    val OTA_DATA_UUID: UUID = UUID.fromString("7b1e8f05-2a5d-4e1a-9c3a-2f6b1d8a10e0")
     val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
     const val OP_SET_MODE: Byte = 0x01
@@ -51,6 +53,17 @@ object HelmetProtocol {
 
     const val FLAG_FLASH = 0x01
     const val FLAG_MY_COLOUR = 0x02
+    const val FLAG_RAINBOW = 0x04
+
+    // The bass colour is one choice of three carried in two flag bits, so a
+    // combination the UI never sends still has to mean something. These mirror
+    // BassColour and bassColour()/withBassColour() in include/leds.h — keep the
+    // precedence identical or the app and the touchscreen will disagree about
+    // what a helmet is actually doing.
+    const val COLOUR_VIOLET = 0
+    const val COLOUR_MINE = 1
+    const val COLOUR_RAINBOW = 2
+    val COLOUR_NAMES = listOf("Violet", "Mine", "Rainbow")
 
     // Limits, from include/config.h.
     const val BRIGHTNESS_MIN = 8
@@ -100,6 +113,30 @@ object HelmetProtocol {
     fun setBass(param: Int, value: Int): ByteArray =
         byteArrayOf(OP_SET_BASS, param.toByte(), value.coerceIn(0, 255).toByte())
 
+    /**
+     * Which of [COLOUR_VIOLET], [COLOUR_MINE], [COLOUR_RAINBOW] a bass flags
+     * byte asks for. Rainbow wins, then my colour, then violet — the order
+     * `bassColour()` uses in the firmware.
+     */
+    fun bassColour(flags: Int): Int = when {
+        (flags and FLAG_RAINBOW) != 0 -> COLOUR_RAINBOW
+        (flags and FLAG_MY_COLOUR) != 0 -> COLOUR_MINE
+        else -> COLOUR_VIOLET
+    }
+
+    /**
+     * [flags] with the colour bits replaced by [choice], leaving [FLAG_FLASH]
+     * alone. Exactly one colour bit is ever set this way.
+     */
+    fun withBassColour(flags: Int, choice: Int): Int {
+        val kept = flags and (FLAG_MY_COLOUR or FLAG_RAINBOW).inv()
+        return when (choice) {
+            COLOUR_MINE -> kept or FLAG_MY_COLOUR
+            COLOUR_RAINBOW -> kept or FLAG_RAINBOW
+            else -> kept
+        }
+    }
+
     // ---- Notifications.
 
     /**
@@ -145,7 +182,89 @@ object HelmetProtocol {
         fun u(i: Int) = v[i].toInt() and 0xFF
         return BassMeter(level = u(0), trigger = u(1), out = u(2), kicks = u(3))
     }
+
+    // ---- Firmware update. Mirrors Ota::State and Ota::Error in include/ota.h.
+
+    const val OTA_BEGIN: Byte = 0x01
+    const val OTA_END: Byte = 0x02
+    const val OTA_ABORT: Byte = 0x03
+
+    const val OTA_IDLE = 0
+    const val OTA_RECEIVING = 1
+    const val OTA_VERIFYING = 2
+    const val OTA_DONE = 3
+    const val OTA_FAILED = 4
+
+    /** Ota::Error, in order. Index 0 is "no error". */
+    val OTA_ERROR_NAMES = listOf(
+        "none",
+        "an update is already running",
+        "this helmet's flash layout has no update slot — reflash it over USB once",
+        "the image is too large for the slot",
+        "the helmet could not write to flash",
+        "more data arrived than was promised",
+        "the transfer was cut short",
+        "the image arrived corrupt",
+        "that is not a valid helmet image",
+        "the helmet got the steps out of order",
+    )
+
+    fun otaErrorText(code: Int): String = OTA_ERROR_NAMES.getOrElse(code) { "unknown error $code" }
+
+    /** `[0x01, size:4 LE, crc32:4 LE]` — what `applyControl` reads for BEGIN. */
+    fun otaBegin(size: Int, crc: Int): ByteArray = byteArrayOf(
+        OTA_BEGIN,
+        (size and 0xFF).toByte(),
+        ((size ushr 8) and 0xFF).toByte(),
+        ((size ushr 16) and 0xFF).toByte(),
+        ((size ushr 24) and 0xFF).toByte(),
+        (crc and 0xFF).toByte(),
+        ((crc ushr 8) and 0xFF).toByte(),
+        ((crc ushr 16) and 0xFF).toByte(),
+        ((crc ushr 24) and 0xFF).toByte(),
+    )
+
+    fun otaEnd(): ByteArray = byteArrayOf(OTA_END)
+    fun otaAbort(): ByteArray = byteArrayOf(OTA_ABORT)
+
+    /** The helmet's progress notification: `[state, error, received:4 LE]`. */
+    fun parseOtaStatus(v: ByteArray): OtaStatus? {
+        if (v.size < 6) return null
+        fun u(i: Int) = v[i].toInt() and 0xFF
+        return OtaStatus(
+            state = u(0),
+            error = u(1),
+            received = u(2) or (u(3) shl 8) or (u(4) shl 16) or (u(5) shl 24),
+        )
+    }
+
+    /**
+     * CRC-32 of [bytes] — the same polynomial `crc32Update()` uses in
+     * src/ota.cpp, which is also what `java.util.zip.CRC32` computes. The
+     * helmet checks this before it makes the new slot bootable, so the two
+     * have to agree exactly or every update fails at the last step.
+     */
+    fun crc32(bytes: ByteArray): Int {
+        val c = java.util.zip.CRC32()
+        c.update(bytes)
+        return c.value.toInt()
+    }
+
+    /**
+     * An ESP32 app image starts with a 0xE9 magic byte. Checking it in the
+     * app means picking the wrong file is caught before a minute of upload,
+     * rather than after it.
+     */
+    fun looksLikeFirmware(bytes: ByteArray): Boolean =
+        bytes.size > 1024 && (bytes[0].toInt() and 0xFF) == 0xE9
 }
+
+/** One progress notification from a firmware update in flight. */
+data class OtaStatus(
+    val state: Int,
+    val error: Int,
+    val received: Int,
+)
 
 /** The Bass mode settings, by the same ids as `BassParam` in the firmware. */
 data class BassSettings(

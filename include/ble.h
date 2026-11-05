@@ -19,6 +19,13 @@
 //   0x0C SET_BASS        3 bytes [0x0C, param, value], param = BassParam:
 //                        0 sensitivity, 1 gate, 2 kick, 3 decay, 4 band,
 //                        5 style, 6 flags, 7 hum (see leds.h)
+//                        flags bit 0 flash, bit 1 my colour, bit 2 rainbow.
+//                        The two colour bits are one choice of three, so a
+//                        client that sets both gets the order bassColour()
+//                        defines: rainbow, then my colour, then violet.
+//                        Firmware before 1.8.0 masks bit 2 off and answers
+//                        with the flags it kept, so asking an older helmet for
+//                        a rainbow leaves it on violet and says so.
 // State (read/notify) 7b1e8f02-...: 20 bytes, the most one notification
 // carries at the default MTU
 //   [mode, brightness, on, outputLevel, r, g, b, speed, order, count,
@@ -29,6 +36,26 @@
 //   [level, trigger, out, kicks] -- level and trigger in the gate's units,
 //   out 0..255, kicks a wrapping counter. ~25 Hz, only in Bass mode and only
 //   while subscribed.
+//
+// Firmware update. Two characteristics of its own rather than more opcodes on
+// the control one: an image is megabytes against the two bytes everything
+// else sends, and it wants the largest MTU the phone will agree to.
+// OTA control (write/notify) 7b1e8f04-...
+//   host -> helmet:
+//     0x01 BEGIN  9 bytes [0x01, size:4 LE, crc32:4 LE]
+//     0x02 END    1 byte  -- all of it has been sent, check and commit
+//     0x03 ABORT  1 byte  -- give up, leave the running slot alone
+//   helmet -> host (notify), 6 bytes:
+//     [state, error, received:4 LE]  state/error are Ota::State / Ota::Error
+//   Sent on BEGIN, every ~250 ms while receiving, and on END or ABORT. The
+//   progress notifications double as flow control: the app keeps its writes
+//   within a window of what the helmet has acknowledged receiving.
+// OTA data (write without response) 7b1e8f05-...: raw image bytes, in order,
+//   up to MTU-3 at a time. Only meaningful between BEGIN and END.
+//
+// A transfer writes into the slot the helmet is not running from, and nothing
+// is switched over until END has checked the CRC, so an interrupted update
+// leaves the helmet exactly as it was.
 //
 // The state payload only ever grows at the end, so a client that reads the
 // first four bytes and stops keeps working across firmware updates.

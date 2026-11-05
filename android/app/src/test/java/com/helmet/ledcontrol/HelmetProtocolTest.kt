@@ -121,5 +121,93 @@ class HelmetProtocolTest {
         assertEquals("Chase", HelmetProtocol.MODE_NAMES.last())
         assertEquals(6, HelmetProtocol.ORDER_NAMES.size) // ORDER_COUNT
         assertEquals(12, HelmetProtocol.PRESETS.size)
+        assertEquals(3, HelmetProtocol.COLOUR_NAMES.size) // BASS_COLOUR_COUNT
+    }
+
+    @Test fun bassColourReadsTheFlagBitsInTheFirmwareOrder() {
+        // Two bits carry one choice of three, so the pair the UI never sends
+        // still has to resolve the same way bassColour() does in leds.h:
+        // rainbow, then my colour, then violet.
+        assertEquals(HelmetProtocol.COLOUR_VIOLET, HelmetProtocol.bassColour(0))
+        assertEquals(HelmetProtocol.COLOUR_VIOLET, HelmetProtocol.bassColour(HelmetProtocol.FLAG_FLASH))
+        assertEquals(HelmetProtocol.COLOUR_MINE, HelmetProtocol.bassColour(0x02))
+        assertEquals(HelmetProtocol.COLOUR_RAINBOW, HelmetProtocol.bassColour(0x04))
+        assertEquals(HelmetProtocol.COLOUR_RAINBOW, HelmetProtocol.bassColour(0x06))
+        // Firmware 1.7.0 masked bit 2 off, so 0x03 is still Mine.
+        assertEquals(HelmetProtocol.COLOUR_MINE, HelmetProtocol.bassColour(0x03))
+    }
+
+    @Test fun otaBeginCarriesSizeAndCrcLittleEndian() {
+        // src/ble.cpp reads both with le32(), so the byte order is the
+        // contract. 0x0012D68D bytes with CRC 0xCBF43926.
+        assertArrayEquals(
+            bytes(0x01, 0x8D, 0xD6, 0x12, 0x00, 0x26, 0x39, 0xF4, 0xCB),
+            HelmetProtocol.otaBegin(0x0012D68D, 0xCBF43926.toInt()),
+        )
+        assertArrayEquals(bytes(0x02), HelmetProtocol.otaEnd())
+        assertArrayEquals(bytes(0x03), HelmetProtocol.otaAbort())
+    }
+
+    @Test fun parsesOtaProgress() {
+        // [state, error, received:4 LE] -- 0x0012D68D received, still going.
+        val s = HelmetProtocol.parseOtaStatus(bytes(1, 0, 0x8D, 0xD6, 0x12, 0x00))!!
+        assertEquals(HelmetProtocol.OTA_RECEIVING, s.state)
+        assertEquals(0, s.error)
+        assertEquals(0x0012D68D, s.received)
+        // A failure carries the reason, and every Ota::Error has wording.
+        val f = HelmetProtocol.parseOtaStatus(bytes(4, 7, 0, 0, 0, 0))!!
+        assertEquals(HelmetProtocol.OTA_FAILED, f.state)
+        assertEquals("the image arrived corrupt", HelmetProtocol.otaErrorText(f.error))
+        assertEquals(10, HelmetProtocol.OTA_ERROR_NAMES.size) // Ota::Error count
+        assertNull(HelmetProtocol.parseOtaStatus(bytes(1, 0, 0, 0, 0)))
+    }
+
+    @Test fun crc32MatchesTheFirmwarePolynomial() {
+        // src/ota.cpp computes CRC-32 as the image streams past. These are the
+        // standard vectors; the C implementation was checked against them too,
+        // because a mismatch fails every update at the final commit.
+        assertEquals(0xCBF43926.toInt(), HelmetProtocol.crc32("123456789".toByteArray()))
+        assertEquals(0, HelmetProtocol.crc32(ByteArray(0)))
+        val big = ByteArray(4096) { ((it * 31 + 7) and 0xFF).toByte() }
+        assertEquals(0x5D1C4EE3.toInt(), HelmetProtocol.crc32(big))
+    }
+
+    @Test fun rejectsAFileThatIsNotAnEsp32Image() {
+        // Catching this in the app saves a minute of upload before the helmet
+        // would have rejected it anyway.
+        val image = ByteArray(2048).also { it[0] = 0xE9.toByte() }
+        assertTrue(HelmetProtocol.looksLikeFirmware(image))
+        assertFalse(HelmetProtocol.looksLikeFirmware(ByteArray(2048))) // no magic
+        assertFalse(HelmetProtocol.looksLikeFirmware(bytes(0xE9, 1, 2))) // too short
+    }
+
+    @Test fun otaProgressIsReportedFromWhatTheHelmetConfirmed() {
+        // percent tracks acked, not sent: what is still in the phone's queue
+        // has not reached flash, and a bar that runs ahead then stalls at 100
+        // is worse than one that is honest.
+        val t = OtaTransfer(HelmetProtocol.OTA_RECEIVING, 0, sent = 8000, acked = 4000, total = 8000)
+        assertEquals(50, t.percent)
+        assertTrue(t.inFlight)
+        assertFalse(OtaTransfer(HelmetProtocol.OTA_DONE, 0, 8000, 8000, 8000).inFlight)
+        assertFalse(OtaTransfer(HelmetProtocol.OTA_FAILED, 7, 100, 100, 8000).inFlight)
+        // A zero-length image must not divide by zero.
+        assertEquals(0, OtaTransfer(HelmetProtocol.OTA_IDLE, 0, 0, 0, 0).percent)
+    }
+
+    @Test fun settingTheBassColourKeepsFlashAndSetsOneBit() {
+        val flash = HelmetProtocol.FLAG_FLASH
+        assertEquals(flash, HelmetProtocol.withBassColour(flash, HelmetProtocol.COLOUR_VIOLET))
+        assertEquals(flash or 0x02, HelmetProtocol.withBassColour(flash, HelmetProtocol.COLOUR_MINE))
+        assertEquals(flash or 0x04, HelmetProtocol.withBassColour(flash, HelmetProtocol.COLOUR_RAINBOW))
+        // Switching away from rainbow clears it rather than stacking bits.
+        assertEquals(0x02, HelmetProtocol.withBassColour(0x04, HelmetProtocol.COLOUR_MINE))
+        assertEquals(0x04, HelmetProtocol.withBassColour(0x02, HelmetProtocol.COLOUR_RAINBOW))
+        assertEquals(0, HelmetProtocol.withBassColour(0x06, HelmetProtocol.COLOUR_VIOLET))
+        // Flash off stays off, and every result round-trips.
+        for (c in HelmetProtocol.COLOUR_VIOLET..HelmetProtocol.COLOUR_RAINBOW) {
+            val f = HelmetProtocol.withBassColour(0, c)
+            assertEquals(0, f and HelmetProtocol.FLAG_FLASH)
+            assertEquals(c, HelmetProtocol.bassColour(f))
+        }
     }
 }

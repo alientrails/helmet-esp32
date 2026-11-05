@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -18,6 +19,7 @@ import androidx.compose.ui.Modifier
 import com.helmet.ledcontrol.BassMeter
 import com.helmet.ledcontrol.HelmetProtocol
 import com.helmet.ledcontrol.HelmetState
+import com.helmet.ledcontrol.OtaTransfer
 import com.helmet.ledcontrol.ui.theme.AlienTrails
 import com.helmet.ledcontrol.ui.theme.AtType
 import kotlinx.coroutines.delay
@@ -161,18 +163,15 @@ fun BassSection(
             Spacer(Modifier.height(AtSpace.s3))
             Eyebrow("Colour")
             Spacer(Modifier.height(AtSpace.s2))
-            val mine = (bass.flags and HelmetProtocol.FLAG_MY_COLOUR) != 0
             val flash = (bass.flags and HelmetProtocol.FLAG_FLASH) != 0
             OptionRow(
-                options = listOf("Violet", "Mine"),
-                selected = if (mine) 1 else 0,
+                options = HelmetProtocol.COLOUR_NAMES,
+                selected = HelmetProtocol.bassColour(bass.flags),
                 onSelect = { choice ->
-                    val f = if (choice == 1) {
-                        bass.flags or HelmetProtocol.FLAG_MY_COLOUR
-                    } else {
-                        bass.flags and HelmetProtocol.FLAG_MY_COLOUR.inv()
-                    }
-                    onBass(HelmetProtocol.BASS_FLAGS, f)
+                    onBass(
+                        HelmetProtocol.BASS_FLAGS,
+                        HelmetProtocol.withBassColour(bass.flags, choice),
+                    )
                 },
                 toggle = { m ->
                     OptionCell(
@@ -225,7 +224,16 @@ fun StripSection(
 }
 
 @Composable
-fun SystemSection(deviceName: String?, appVersion: String, state: HelmetState) {
+fun SystemSection(
+    deviceName: String?,
+    appVersion: String,
+    state: HelmetState,
+    canUpdate: Boolean,
+    ota: OtaTransfer?,
+    onPickFirmware: () -> Unit,
+    onCancelUpdate: () -> Unit,
+    onDismissUpdate: () -> Unit,
+) {
     Section("System") {
         Panel {
             Column(verticalArrangement = Arrangement.spacedBy(AtSpace.s2)) {
@@ -235,6 +243,99 @@ fun SystemSection(deviceName: String?, appVersion: String, state: HelmetState) {
                     InfoRow("LED strip", "${state.count} px · ${state.lit} lit · ${HelmetProtocol.ORDER_NAMES.getOrElse(state.order) { "?" }}")
                 }
             }
+            if (canUpdate) {
+                Spacer(Modifier.height(AtSpace.s4))
+                Hairline()
+                Spacer(Modifier.height(AtSpace.s4))
+                FirmwareUpdate(ota, onPickFirmware, onCancelUpdate, onDismissUpdate)
+            }
+        }
+    }
+}
+
+/**
+ * Sending a firmware image to the helmet. Idle it is one button; in flight it
+ * is a progress bar and a warning, because this is the one operation where
+ * walking out of range or pulling the battery actually matters.
+ */
+@Composable
+private fun FirmwareUpdate(
+    ota: OtaTransfer?,
+    onPick: () -> Unit,
+    onCancel: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Eyebrow("Firmware")
+    Spacer(Modifier.height(AtSpace.s2))
+
+    when {
+        ota == null -> {
+            Text(
+                "Send a .bin built for this helmet. It installs into the spare " +
+                    "slot and only switches over once all of it has arrived.",
+                style = AtType.small,
+                color = AlienTrails.InkMuted,
+            )
+            Spacer(Modifier.height(AtSpace.s3))
+            SecondaryButton("Update firmware", onPick, Modifier.fillMaxWidth())
+        }
+
+        ota.state == HelmetProtocol.OTA_DONE -> {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                SignalTag(Signal.ONLINE, "Updated")
+                Spacer(Modifier.width(AtSpace.s2))
+                Text(
+                    "The helmet is restarting.",
+                    style = AtType.small,
+                    color = AlienTrails.InkMuted,
+                )
+            }
+            Spacer(Modifier.height(AtSpace.s3))
+            SecondaryButton("Done", onDismiss, Modifier.fillMaxWidth())
+        }
+
+        ota.state == HelmetProtocol.OTA_FAILED -> {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                SignalTag(Signal.ALERT, "Failed")
+                Spacer(Modifier.width(AtSpace.s2))
+                // Nothing was switched over, so say so: "failed" on its own
+                // reads like the helmet is now broken.
+                Text(
+                    HelmetProtocol.otaErrorText(ota.error),
+                    style = AtType.small,
+                    color = AlienTrails.InkMuted,
+                )
+            }
+            Spacer(Modifier.height(AtSpace.s2))
+            Text(
+                "The helmet is still running its old firmware.",
+                style = AtType.small,
+                color = AlienTrails.InkMuted,
+            )
+            Spacer(Modifier.height(AtSpace.s3))
+            SecondaryButton("Dismiss", onDismiss, Modifier.fillMaxWidth())
+        }
+
+        else -> {
+            val verifying = ota.state == HelmetProtocol.OTA_VERIFYING
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Eyebrow(if (verifying) "Checking" else "Sending", Modifier.weight(1f))
+                Text(
+                    "${ota.percent}% · ${ota.acked / 1024} / ${ota.total / 1024} KB",
+                    style = AtType.data,
+                    color = AlienTrails.Ink,
+                )
+            }
+            Spacer(Modifier.height(AtSpace.s2))
+            ProgressBar(if (verifying) 1f else ota.percent / 100f)
+            Spacer(Modifier.height(AtSpace.s2))
+            Text(
+                "Keep the phone near the helmet and leave it powered.",
+                style = AtType.small,
+                color = AlienTrails.Amber,
+            )
+            Spacer(Modifier.height(AtSpace.s3))
+            SecondaryButton("Cancel", onCancel, Modifier.fillMaxWidth())
         }
     }
 }

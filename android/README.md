@@ -21,6 +21,25 @@ in `../include/ble.h`.
    ./gradlew testDebugUnitTest
    ```
 
+## Updating the helmet's firmware
+
+The **System** section offers *Update firmware* when the connected helmet
+carries the update characteristics (firmware 1.9.0 and newer on the CYD).
+Pick a `.bin` built for that board — `pio run -e cyd` leaves one in
+`.pio/build/cyd/firmware.bin` — and the app checks it looks like an ESP32
+image, then streams it over BLE in MTU-sized chunks.
+
+The app never gets more than 32 KB ahead of what the helmet has confirmed
+receiving, so a helmet busy writing flash slows the phone down rather than
+losing the middle of the image. Progress is reported from what the helmet has
+acknowledged, not from what the phone has queued. Expect one to three minutes:
+BLE is slow, and the alternative was asking the phone to join a Wi-Fi network
+and give up its internet for the duration.
+
+Nothing is switched over until the whole image has arrived and its CRC-32
+matches, so cancelling, walking out of range or a flat battery all leave the
+helmet on the firmware it was already running.
+
 ## Look and feel
 
 The app uses the Alien Trails Labs design system (see

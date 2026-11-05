@@ -6,6 +6,7 @@
 
 #include "config.h"
 #include "leds.h"
+#include "ota.h"
 
 namespace Persist {
 namespace {
@@ -132,6 +133,17 @@ void markDirty() {
 }
 
 void loop() {
+  // Nothing is written while an image is arriving. An update switches the
+  // lights off for its duration, and that would otherwise settle into flash
+  // and leave the helmet booting dark afterwards -- which looks exactly like
+  // the update having broken it. Standing down also keeps NVS off the flash
+  // while the OTA slot is being written, rather than having two writers.
+  // Through OTA_DONE as well as the transfer: the reboot is a few hundred ms
+  // behind the commit, and nothing should depend on that being shorter than
+  // the settle time.
+  if (Ota::active() || Ota::state() == Ota::OTA_DONE) {
+    return;
+  }
   uint8_t now[S_LEN];
   snapshot(now);
   if (memcmp(now, seen, S_LEN) != 0) {

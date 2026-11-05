@@ -35,7 +35,10 @@ class HelmetBle(context: Context) {
     private var controlChar: BluetoothGattCharacteristic? = null
     private var stateChar: BluetoothGattCharacteristic? = null
     private var meterChar: BluetoothGattCharacteristic? = null
+    private var otaCtrlChar: BluetoothGattCharacteristic? = null
+    private var otaDataChar: BluetoothGattCharacteristic? = null
     private var scanning = false
+    private var mtu = DEFAULT_MTU
 
     private val _connectionState = MutableStateFlow(ConnectionState.DISCONNECTED)
     val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
@@ -52,6 +55,14 @@ class HelmetBle(context: Context) {
 
     private val _lastError = MutableStateFlow<String?>(null)
     val lastError: StateFlow<String?> = _lastError.asStateFlow()
+
+    /** Null unless a firmware update is in flight or has just finished. */
+    private val _ota = MutableStateFlow<OtaTransfer?>(null)
+    val ota: StateFlow<OtaTransfer?> = _ota.asStateFlow()
+
+    /** True when the connected helmet offers the update characteristics. */
+    private val _canUpdate = MutableStateFlow(false)
+    val canUpdate: StateFlow<Boolean> = _canUpdate.asStateFlow()
 
     fun isBluetoothEnabled(): Boolean = adapter?.isEnabled == true
 
@@ -81,7 +92,10 @@ class HelmetBle(context: Context) {
 
     private fun enqueue(op: Op) {
         mainHandler.post {
-            if (op is Op.Write) {
+            // KEY_STREAM is firmware-image data: every chunk is different and
+            // all of them have to arrive, so coalescing would quietly eat the
+            // middle of the image. Only controls collapse.
+            if (op is Op.Write && op.key != KEY_STREAM) {
                 val pending = ops.firstOrNull { it is Op.Write && it.key == op.key } as Op.Write?
                 if (pending != null) {
                     pending.value = op.value
@@ -271,6 +285,12 @@ class HelmetBle(context: Context) {
             // Absent on firmware older than the bass meter; everything else
             // still works without it.
             meterChar = service.getCharacteristic(HelmetProtocol.METER_UUID)
+            // Absent on firmware older than 1.8.0, which cannot be updated
+            // over the air at all; the app hides the control rather than
+            // offering something that would fail.
+            otaCtrlChar = service.getCharacteristic(HelmetProtocol.OTA_CTRL_UUID)
+            otaDataChar = service.getCharacteristic(HelmetProtocol.OTA_DATA_UUID)
+            _canUpdate.value = otaCtrlChar != null && otaDataChar != null
 
             // Subscribe first, then read, so nothing that changes between the
             // read and the subscription is missed.
@@ -278,8 +298,20 @@ class HelmetBle(context: Context) {
                 enqueue(Op.EnableNotify(it))
             }
             meterChar?.let { enqueue(Op.EnableNotify(it)) }
+            otaCtrlChar?.let { enqueue(Op.EnableNotify(it)) }
             stateChar?.let { enqueue(Op.Read(it)) }
+            // Everything but an update fits the default MTU; an image at 20
+            // bytes a packet would take the best part of an hour.
+            if (otaDataChar != null) {
+                g.requestMtu(MAX_MTU)
+            }
             _connectionState.value = ConnectionState.CONNECTED
+        }
+
+        override fun onMtuChanged(g: BluetoothGatt, newMtu: Int, status: Int) {
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                mtu = newMtu.coerceIn(DEFAULT_MTU, MAX_MTU)
+            }
         }
 
         override fun onDescriptorWrite(g: BluetoothGatt, d: BluetoothGattDescriptor, status: Int) {
@@ -342,6 +374,8 @@ class HelmetBle(context: Context) {
                 HelmetProtocol.parseState(value, _state.value)?.let { _state.value = it }
             HelmetProtocol.METER_UUID ->
                 _meter.value = HelmetProtocol.parseMeter(value)
+            HelmetProtocol.OTA_CTRL_UUID ->
+                HelmetProtocol.parseOtaStatus(value)?.let { onOtaStatus(it) }
         }
     }
 
@@ -429,7 +463,142 @@ class HelmetBle(context: Context) {
         _lastError.value = null
     }
 
+    /** Surfaces a problem that happened outside the GATT layer, e.g. file I/O. */
+    fun reportError(message: String) {
+        _lastError.value = message
+    }
+
+    // --------------------------------------------------------- firmware update
+    //
+    // The image goes out over its own characteristic in MTU-sized chunks,
+    // written without response because an acknowledgement per chunk would
+    // halve the throughput. What keeps the app from running away from the
+    // helmet is the window: it never has more than OTA_WINDOW bytes in flight
+    // beyond what the helmet's progress notifications have confirmed, so a
+    // helmet busy writing flash slows the phone down instead of losing the
+    // middle of the image.
+
+    private var image: ByteArray? = null
+    private var sent = 0
+    // A progress notification sent just before the helmet saw END still
+    // arrives after it. Without this the app would send a second END, and the
+    // helmet would answer "out of order" for an update that had just worked.
+    private var endSent = false
+
+    /**
+     * Sends [bytes] to the helmet as a firmware image. Returns false, with
+     * [lastError] set, if this helmet or this file cannot take one.
+     */
+    fun startOta(bytes: ByteArray): Boolean {
+        val ctrl = otaCtrlChar
+        if (ctrl == null || otaDataChar == null) {
+            _lastError.value = "This helmet's firmware cannot be updated over the air"
+            return false
+        }
+        if (_ota.value?.inFlight == true) {
+            _lastError.value = "An update is already running"
+            return false
+        }
+        if (!HelmetProtocol.looksLikeFirmware(bytes)) {
+            _lastError.value = "That file is not a helmet firmware image"
+            return false
+        }
+        image = bytes
+        sent = 0
+        endSent = false
+        _ota.value = OtaTransfer(
+            state = HelmetProtocol.OTA_IDLE,
+            error = 0,
+            sent = 0,
+            acked = 0,
+            total = bytes.size,
+        )
+        // BEGIN goes through the same queue as everything else, so it cannot
+        // overtake a control write already on its way.
+        enqueue(Op.Write(ctrl, HelmetProtocol.otaBegin(bytes.size, HelmetProtocol.crc32(bytes)), KEY_OTA_CTRL))
+        return true
+    }
+
+    /** Gives up on an update in flight. The helmet keeps running what it has. */
+    fun cancelOta() {
+        val ctrl = otaCtrlChar ?: return
+        image = null
+        sent = 0
+        endSent = true  // nothing more of this transfer should go out
+        mainHandler.post { ops.removeAll { it is Op.Write && it.key == KEY_STREAM } }
+        enqueue(Op.Write(ctrl, HelmetProtocol.otaAbort(), KEY_OTA_CTRL))
+    }
+
+    /** Clears a finished or failed update so the UI goes back to normal. */
+    fun clearOta() {
+        image = null
+        sent = 0
+        endSent = false
+        _ota.value = null
+    }
+
+    private fun onOtaStatus(status: OtaStatus) {
+        val img = image
+        val prev = _ota.value
+        _ota.value = OtaTransfer(
+            state = status.state,
+            error = status.error,
+            sent = sent,
+            acked = status.received,
+            total = prev?.total ?: img?.size ?: 0,
+        )
+        when (status.state) {
+            HelmetProtocol.OTA_RECEIVING -> pumpOta(status.received)
+            HelmetProtocol.OTA_DONE, HelmetProtocol.OTA_FAILED -> {
+                image = null
+                sent = 0
+            }
+        }
+    }
+
+    /** Tops the queue back up to the window, then sends END once all of it is out. */
+    private fun pumpOta(acked: Int) {
+        if (endSent) return
+        val img = image ?: return
+        val data = otaDataChar ?: return
+        val chunk = (mtu - 3).coerceIn(20, 512)
+        while (sent < img.size && sent - acked < OTA_WINDOW) {
+            val end = minOf(sent + chunk, img.size)
+            enqueue(Op.Write(data, img.copyOfRange(sent, end), KEY_STREAM))
+            sent = end
+        }
+        _ota.value = _ota.value?.copy(sent = sent)
+        if (sent >= img.size && !endSent) {
+            endSent = true
+            otaCtrlChar?.let { enqueue(Op.Write(it, HelmetProtocol.otaEnd(), KEY_OTA_CTRL)) }
+        }
+    }
+
     private companion object {
         const val OP_TIMEOUT_MS = 1500L
+        const val DEFAULT_MTU = 23
+        const val MAX_MTU = 517
+        // Write keys. Controls coalesce by key; KEY_STREAM never does.
+        const val KEY_STREAM = -1
+        const val KEY_OTA_CTRL = -2
+        // How far ahead of the helmet's confirmed position the app may get.
+        const val OTA_WINDOW = 32 * 1024
     }
+}
+
+/** A firmware update in flight, as the UI needs to show it. */
+data class OtaTransfer(
+    val state: Int,
+    val error: Int,
+    val sent: Int,
+    val acked: Int,
+    val total: Int,
+) {
+    val inFlight: Boolean
+        get() = state == HelmetProtocol.OTA_IDLE ||
+            state == HelmetProtocol.OTA_RECEIVING ||
+            state == HelmetProtocol.OTA_VERIFYING
+
+    /** 0..100, by what the helmet has confirmed rather than what was sent. */
+    val percent: Int get() = if (total > 0) (acked.toLong() * 100 / total).toInt() else 0
 }

@@ -10,6 +10,7 @@ import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import android.net.Uri
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
@@ -77,6 +78,23 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.StartActivityForResult(),
     ) { startScanIfPermitted() }
 
+    // A firmware image is a few hundred KB to a couple of MB, which is small
+    // enough to read in one go and much simpler than streaming it off a
+    // content URI while the transfer runs.
+    private val pickFirmware = registerForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri: Uri? ->
+        if (uri == null) return@registerForActivityResult
+        val bytes = runCatching {
+            contentResolver.openInputStream(uri)?.use { it.readBytes() }
+        }.getOrNull()
+        if (bytes == null) {
+            ble.reportError("Could not read that file")
+        } else {
+            ble.startOta(bytes)
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         // Dark first: void behind the status and navigation bars too.
         val bars = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
@@ -103,7 +121,14 @@ class MainActivity : ComponentActivity() {
                             onFinished = { showSplash = false },
                         )
                     } else {
-                        HelmetScreen(ble = ble, appVersion = version, onConnectClick = { requestScan() })
+                        HelmetScreen(
+                            ble = ble,
+                            appVersion = version,
+                            onConnectClick = { requestScan() },
+                            // Images come off the phone as any binary file;
+                            // .bin has no registered MIME type to filter on.
+                            onPickFirmware = { pickFirmware.launch(arrayOf("*/*")) },
+                        )
                     }
                 }
             }
@@ -138,12 +163,19 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun HelmetScreen(ble: HelmetBle, appVersion: String, onConnectClick: () -> Unit) {
+fun HelmetScreen(
+    ble: HelmetBle,
+    appVersion: String,
+    onConnectClick: () -> Unit,
+    onPickFirmware: () -> Unit,
+) {
     val connectionState by ble.connectionState.collectAsState()
     val deviceName by ble.deviceName.collectAsState()
     val state by ble.state.collectAsState()
     val meter by ble.meter.collectAsState()
     val error by ble.lastError.collectAsState()
+    val canUpdate by ble.canUpdate.collectAsState()
+    val ota by ble.ota.collectAsState()
     var brightnessDrag by remember { mutableStateOf<Float?>(null) }
     val connected = connectionState == ConnectionState.CONNECTED
 
@@ -249,7 +281,16 @@ fun HelmetScreen(ble: HelmetBle, appVersion: String, onConnectClick: () -> Unit)
                         onMaxMa = { ble.setMaxMa(it) },
                     )
                 }
-                SystemSection(deviceName, appVersion, state)
+                SystemSection(
+                    deviceName = deviceName,
+                    appVersion = appVersion,
+                    state = state,
+                    canUpdate = canUpdate,
+                    ota = ota,
+                    onPickFirmware = onPickFirmware,
+                    onCancelUpdate = { ble.cancelOta() },
+                    onDismissUpdate = { ble.clearOta() },
+                )
             } else {
                 Text(
                     "Power the helmet, then connect. It advertises as Helmet-LED-XXXX " +

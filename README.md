@@ -114,9 +114,9 @@ Hold **BOOT**, tap **RST**, release BOOT, then upload. Merged images
 | Long-press select | home, or toggle from home |
 
 Modes: Solid, Breathe, Heartbeat, Slow blink, Fast blink, Strobe, SOS,
-Party (fast rainbow), **Bass** (purple kick meter), Comet, Scanner (Cylon
-sweep), Twinkle, Fire, Rainbow (one spectrum across the strip, drifting),
-Wipe and Chase.
+Party (the rainbow in hard flashes), **Bass** (purple kick meter), Comet,
+Scanner (Cylon sweep), Twinkle, Fire, Rainbow (one spectrum across the strip,
+drifting), Wipe and Chase.
 
 Comet, Scanner, Twinkle, Wipe and Chase are painted in the colour you pick;
 Party, Rainbow and Fire bring their own palette.
@@ -139,8 +139,9 @@ shows the mic level, the noise gate (amber line) and the level a kick has to
 clear (ink notches), and flashes when a kick fires. With nothing playing, set
 **Noise gate** just above where the bar settles; then set **Sensitivity** and
 **Kick** with music on. **Decay** is how long a flash hangs, **Style** picks
-Meter, Pulse or Centre, and **Colour** draws it in violet or your own colour,
-with an optional white **Flash** on the loudest peaks. Everything is saved.
+Meter, Pulse or Centre, and **Colour** draws it in violet, your own colour or
+a rainbow across the strip, with an optional white **Flash** on the loudest
+peaks. Everything is saved.
 
 The MAX9814 sets its *maximum* gain from the GAIN pin, and with nothing
 playing its automatic gain control turns itself all the way up to it:
@@ -166,6 +167,12 @@ persistence as the XIAO builds.
 ```bash
 pio run -e cyd -t upload
 ```
+
+The CYD build uses the `min_spiffs` partition layout, which carries two app
+slots so the firmware can be updated from the phone. Moving to it changes the
+flash map, so **one upload over USB is needed** to get a helmet onto it; after
+that the app can do it over the air. Settings survive the move — `nvs` keeps
+the same offset and size — and the filesystem partition it shrinks is unused.
 
 Wire the strip to the **P3/CN1** header: `DIN` to GPIO22 (via 330 Ohm),
 plus 5V and GND. The mic goes to GPIO35.
@@ -194,6 +201,16 @@ wears the Alien Trails Labs identity (see [`brand/`](brand/README.md)):
   current budget FastLED holds the strip to. All saved to NVS.
 - **System** — firmware, strip, BLE and uptime, and a touch recalibration
   button.
+
+While an update is arriving the screen hands itself over to it completely: the
+strip switches off, a progress bar replaces the tabs, and the one instruction
+that matters — keep it powered — sits under it in amber. An image is written
+into the slot the helmet is *not* running from and nothing is switched over
+until all of it has arrived and its CRC matches, so an update that is
+interrupted (phone walks off, battery dies) leaves the helmet exactly as it
+was. What that does not cover is an image that is intact, boots, and is
+broken: Arduino's stock bootloader has no automatic rollback, so recovering
+from one of those still means a USB cable.
 
 Touch is calibrated on first boot (three targets) and the affine solution is
 stored in NVS, so any panel orientation works without hard-coded constants.
