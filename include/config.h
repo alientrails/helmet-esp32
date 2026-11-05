@@ -2,7 +2,7 @@
 
 // Helmet LED controller — Seeed XIAO ESP32, USB power bank, 0.91" OLED.
 
-#define HELMET_FW_VERSION "1.8.0"
+#define HELMET_FW_VERSION "1.9.0"
 
 // 0.91" modules are almost always SSD1306 128x32 at 0x3C.
 // If the screen is blank, try 0x3D. If you actually have a 0.96" 128x64,

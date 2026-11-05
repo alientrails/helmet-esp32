@@ -7,6 +7,7 @@
 #include "ble.h"
 #include "config.h"
 #include "leds.h"
+#include "ota.h"
 #include "ui_theme.h"
 
 // Layout, 320x240 landscape, Alien Trails Labs Void theme:
@@ -1126,7 +1127,167 @@ void showSplash(uint32_t holdMs) {
   lv_anim_start(&out);
 }
 
+// ---------------------------------------------------------------------------
+// Firmware update
+//
+// A full-screen takeover rather than a row on the System tab. An update is the
+// one time the helmet must not be unplugged, and the screen is the only place
+// to say so -- the strip is dark by then, because the update turned it off.
+
+lv_obj_t *otaCover = nullptr;
+lv_obj_t *otaHeading = nullptr;
+lv_obj_t *otaBar = nullptr;
+lv_obj_t *otaReading = nullptr;
+lv_obj_t *otaNote = nullptr;
+uint8_t shownOtaState = 0xFF;
+int32_t shownOtaPct = -1;
+
+const char *otaErrorText(uint8_t e) {
+  switch (e) {
+    case Ota::OTA_ERR_BUSY: return "already updating";
+    case Ota::OTA_ERR_NO_SLOT: return "no update slot \xE2\x80\x94 reflash over USB";
+    case Ota::OTA_ERR_TOO_BIG: return "image too large";
+    case Ota::OTA_ERR_WRITE: return "flash write failed";
+    case Ota::OTA_ERR_OVERRUN: return "more data than promised";
+    case Ota::OTA_ERR_SHORT: return "transfer cut short";
+    case Ota::OTA_ERR_CRC: return "image arrived corrupt";
+    case Ota::OTA_ERR_VERIFY: return "not a valid helmet image";
+    case Ota::OTA_ERR_NOT_STARTED: return "out of order";
+    default: return "unknown";
+  }
+}
+
+void otaDismiss(lv_event_t *) {
+  if (otaCover != nullptr) {
+    lv_obj_del(otaCover);
+    otaCover = nullptr;
+    shownOtaState = 0xFF;
+    shownOtaPct = -1;
+  }
+}
+
+void buildOtaCover() {
+  otaCover = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(otaCover);
+  lv_obj_set_pos(otaCover, 0, 0);
+  lv_obj_set_size(otaCover, SCREEN_W, SCREEN_H);
+  lv_obj_clear_flag(otaCover, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(otaCover, LV_OBJ_FLAG_CLICKABLE);  // swallow stray touches
+  lv_obj_set_style_bg_color(otaCover, col(VOID), 0);
+  lv_obj_set_style_bg_opa(otaCover, LV_OPA_COVER, 0);
+
+  eyebrow(otaCover, "FIRMWARE", PAD, 56);
+
+  otaHeading = lv_label_create(otaCover);
+  lv_obj_set_style_text_font(otaHeading, &at_sans_20, 0);
+  lv_obj_set_style_text_color(otaHeading, col(INK), 0);
+  lv_obj_set_pos(otaHeading, PAD, 74);
+  lv_label_set_text(otaHeading, "Updating");
+
+  otaBar = lv_bar_create(otaCover);
+  lv_obj_remove_style_all(otaBar);
+  lv_obj_set_pos(otaBar, PAD, 112);
+  lv_obj_set_size(otaBar, SCREEN_W - 2 * PAD, 6);
+  lv_obj_set_style_bg_color(otaBar, col(LINE_STRONG), 0);
+  lv_obj_set_style_bg_opa(otaBar, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(otaBar, 3, 0);
+  lv_obj_set_style_bg_color(otaBar, col(ION), LV_PART_INDICATOR);
+  lv_obj_set_style_bg_opa(otaBar, LV_OPA_COVER, LV_PART_INDICATOR);
+  lv_obj_set_style_radius(otaBar, 3, LV_PART_INDICATOR);
+  lv_bar_set_range(otaBar, 0, 100);
+  lv_bar_set_value(otaBar, 0, LV_ANIM_OFF);
+
+  otaReading = lv_label_create(otaCover);
+  lv_obj_set_style_text_font(otaReading, &at_mono_13, 0);
+  lv_obj_set_style_text_color(otaReading, col(INK), 0);
+  lv_obj_set_pos(otaReading, PAD, 126);
+  lv_label_set_text(otaReading, "0%");
+
+  // Amber, because this is the one instruction on the screen that matters,
+  // and the word says it too -- the colour is not carrying it alone.
+  otaNote = lv_label_create(otaCover);
+  lv_obj_set_style_text_font(otaNote, &at_sans_13, 0);
+  lv_obj_set_style_text_color(otaNote, col(AMBER), 0);
+  lv_obj_set_pos(otaNote, PAD, 160);
+  lv_label_set_text(otaNote, "Keep the helmet powered.");
+}
+
+// Mirrors Ota:: onto the screen. Called from sync(), so it runs at whatever
+// rate the UI already ticks at and costs nothing when nothing is happening.
+void syncOta() {
+  const uint8_t state = (uint8_t)Ota::state();
+  if (state == Ota::OTA_IDLE) {
+    if (otaCover != nullptr && shownOtaState != (uint8_t)Ota::OTA_FAILED) {
+      otaDismiss(nullptr);
+    }
+    return;
+  }
+  if (otaCover == nullptr) {
+    buildOtaCover();
+  }
+
+  const uint32_t total = Ota::total();
+  const int32_t pct =
+      total > 0 ? (int32_t)((uint64_t)Ota::received() * 100u / total) : 0;
+  if (pct != shownOtaPct && state == Ota::OTA_RECEIVING) {
+    lv_bar_set_value(otaBar, pct, LV_ANIM_OFF);
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%d%% \xC2\xB7 %u KB", (int)pct,
+             (unsigned)(Ota::received() / 1024u));
+    lv_label_set_text(otaReading, buf);
+    shownOtaPct = pct;
+  }
+  if (state == shownOtaState) {
+    return;
+  }
+  shownOtaState = state;
+
+  switch (state) {
+    case Ota::OTA_RECEIVING:
+      lv_label_set_text(otaHeading, "Updating");
+      lv_obj_set_style_text_color(otaHeading, col(INK), 0);
+      lv_label_set_text(otaNote, "Keep the helmet powered.");
+      lv_obj_set_style_text_color(otaNote, col(AMBER), 0);
+      break;
+    case Ota::OTA_VERIFYING:
+      lv_label_set_text(otaHeading, "Checking");
+      lv_bar_set_value(otaBar, 100, LV_ANIM_OFF);
+      lv_label_set_text(otaReading, "100%");
+      break;
+    case Ota::OTA_DONE:
+      lv_label_set_text(otaHeading, "Updated");
+      lv_obj_set_style_text_color(otaHeading, col(PHOSPHOR), 0);
+      lv_bar_set_value(otaBar, 100, LV_ANIM_OFF);
+      lv_label_set_text(otaReading, "100%");
+      lv_label_set_text(otaNote, "Restarting\xE2\x80\xA6");
+      lv_obj_set_style_text_color(otaNote, col(PHOSPHOR), 0);
+      break;
+    case Ota::OTA_FAILED: {
+      lv_label_set_text(otaHeading, "Update failed");
+      lv_obj_set_style_text_color(otaHeading, col(ALERT), 0);
+      char buf[64];
+      snprintf(buf, sizeof(buf), "%s", otaErrorText((uint8_t)Ota::error()));
+      lv_label_set_text(otaReading, buf);
+      // Nothing was switched over, so the helmet is exactly as it was. Say so:
+      // "failed" on its own reads like a brick.
+      lv_label_set_text(otaNote, "Nothing changed. Tap to dismiss.");
+      lv_obj_set_style_text_color(otaNote, col(INK_MUTED), 0);
+      lv_obj_add_event_cb(otaCover, otaDismiss, LV_EVENT_CLICKED, nullptr);
+      break;
+    }
+    default:
+      break;
+  }
+}
+
 void sync(uint32_t uptimeSec) {
+  // An update takes the screen over completely, and the widgets underneath
+  // are reading a helmet that has stopped animating anyway.
+  syncOta();
+  if (Ota::active() || Ota::state() == Ota::OTA_DONE) {
+    return;
+  }
+
   const uint8_t mode = Leds::mode();
   if (mode != shownMode) {
     for (int i = 0; i < MODE_COUNT; i++) {

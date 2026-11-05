@@ -3,8 +3,8 @@
 // Compiles the *real* src/ui_screens.cpp and src/ui_theme.cpp against LVGL on
 // the desktop, renders each page into an offscreen framebuffer and writes it
 // out as a PPM. Lets the layout be reviewed (and regressions spotted) without
-// flashing a board. Leds::/Ble:: are stubbed here; everything else is the
-// firmware's own code.
+// flashing a board. Leds::/Ble::/Ota:: are stubbed here; everything else is
+// the firmware's own code.
 //
 //   make -C tools/sim && tools/sim/build/preview out/
 
@@ -20,6 +20,7 @@
 #include "ble.h"
 #include "config.h"
 #include "leds.h"
+#include "ota.h"
 #include "ui_screens.h"
 #include "ui_theme.h"
 
@@ -48,6 +49,10 @@ uint8_t sOrder = LED_ORDER_DEFAULT;
 uint16_t sCount = LED_COUNT;
 uint16_t sMaxMa = LED_MAX_MA;
 uint16_t sSkip = LED_SKIP;
+uint8_t sOtaState = Ota::OTA_IDLE;
+uint8_t sOtaError = Ota::OTA_OK;
+uint32_t sOtaGot = 0;
+uint32_t sOtaTotal = 0;
 uint8_t sBass[BASS_PARAM_COUNT] = {128, 40, 128, 96, BassDsp::BAND_KICK, BASS_STYLE_METER,
                                    BASS_FLAGS_DEFAULT, 1};
 BassDsp::Meter sMeter = {23, 40, 0, 0};
@@ -111,6 +116,21 @@ void color(uint8_t *r, uint8_t *g, uint8_t *b) {
 namespace Ble {
 bool connected() { return sBleConnected; }
 }  // namespace Ble
+
+// The update path itself lives on the device; the preview only needs enough
+// of it to render the screen a helmet shows while an image is arriving.
+namespace Ota {
+bool begin(uint32_t, uint32_t) { return false; }
+bool write(const uint8_t *, size_t) { return false; }
+bool end() { return false; }
+void abort() {}
+void reboot() {}
+State state() { return (State)sOtaState; }
+Error error() { return (Error)sOtaError; }
+uint32_t received() { return sOtaGot; }
+uint32_t total() { return sOtaTotal; }
+bool active() { return sOtaState == OTA_RECEIVING || sOtaState == OTA_VERIFYING; }
+}  // namespace Ota
 
 // ---------------------------------------------------------------------------
 // Offscreen display
@@ -309,6 +329,22 @@ int main(int argc, char **argv) {
   UiScreens::sync(4337);
   advance(300);
   capture(outDir, "7-modes-off");
+
+  // The update takeover, which is the only screen shown while the firmware is
+  // being replaced -- and the only place the "keep it powered" warning can go,
+  // because by then the update has switched the strip off.
+  sOtaTotal = 1009677;
+  sOtaGot = 412000;
+  sOtaState = Ota::OTA_RECEIVING;
+  UiScreens::sync(4337);
+  advance(200);
+  capture(outDir, "8a-update");
+
+  sOtaError = Ota::OTA_ERR_CRC;
+  sOtaState = Ota::OTA_FAILED;
+  UiScreens::sync(4337);
+  advance(200);
+  capture(outDir, "8b-update-failed");
 
   return 0;
 }

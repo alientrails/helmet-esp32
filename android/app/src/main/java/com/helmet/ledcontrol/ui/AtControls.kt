@@ -459,6 +459,32 @@ fun BassMeterLegend(kickLit: Boolean) {
     }
 }
 
+/**
+ * A determinate progress bar in ion — the trail colour, for something moving
+ * along. Not the dotted trail: house rule 3 gives that to brightness alone.
+ */
+@Composable
+fun ProgressBar(fraction: Float, modifier: Modifier = Modifier) {
+    val f = fraction.coerceIn(0f, 1f)
+    Canvas(
+        modifier
+            .fillMaxWidth()
+            .height(6.dp)
+            .semantics { progressBarRangeInfo = ProgressBarRangeInfo(f, 0f..1f) },
+    ) {
+        val corner = CornerRadius(size.height / 2, size.height / 2)
+        drawRoundRect(AlienTrails.LineStrong, cornerRadius = corner)
+        if (f > 0f) {
+            drawRoundRect(
+                AlienTrails.Ion,
+                Offset(0f, 0f),
+                Size(size.width * f, size.height),
+                corner,
+            )
+        }
+    }
+}
+
 /** One "Label ........ reading" line: words in Grotesk, readings in Mono. */
 @Composable
 fun InfoRow(label: String, value: String) {

@@ -5,6 +5,7 @@
 
 #include "config.h"
 #include "leds.h"
+#include "ota.h"
 
 namespace Ble {
 namespace {
@@ -13,6 +14,8 @@ constexpr char kServiceUuid[] = "7b1e8f00-2a5d-4e1a-9c3a-2f6b1d8a10e0";
 constexpr char kControlUuid[] = "7b1e8f01-2a5d-4e1a-9c3a-2f6b1d8a10e0";
 constexpr char kStateUuid[] = "7b1e8f02-2a5d-4e1a-9c3a-2f6b1d8a10e0";
 constexpr char kMeterUuid[] = "7b1e8f03-2a5d-4e1a-9c3a-2f6b1d8a10e0";
+constexpr char kOtaCtrlUuid[] = "7b1e8f04-2a5d-4e1a-9c3a-2f6b1d8a10e0";
+constexpr char kOtaDataUuid[] = "7b1e8f05-2a5d-4e1a-9c3a-2f6b1d8a10e0";
 
 // The state is a set of settings plus the live output level. Settings go out
 // the moment they change. The level on its own changes every frame in any
@@ -22,6 +25,10 @@ constexpr uint32_t kLevelMinMs = 100;  // 10 Hz
 // The bass meter is its own characteristic, streamed only while someone is
 // subscribed and the detector is running. 25 Hz reads as live on a meter.
 constexpr uint32_t kMeterMinMs = 40;
+// How often progress goes back during an update. The app paces itself off
+// these, so too slow stalls the transfer and too fast spends the airtime the
+// image needs. 250 ms is a readable progress bar and a wide enough window.
+constexpr uint32_t kOtaProgressMs = 250;
 
 enum Opcode : uint8_t {
   OP_SET_MODE = 0x01,
@@ -41,6 +48,10 @@ enum Opcode : uint8_t {
 NimBLEServer *gServer = nullptr;
 NimBLECharacteristic *gStateChar = nullptr;
 NimBLECharacteristic *gMeterChar = nullptr;
+NimBLECharacteristic *gOtaCtrlChar = nullptr;
+uint32_t gLastOtaAt = 0;
+bool gOtaRebootPending = false;
+uint32_t gOtaRebootAt = 0;
 uint32_t gLastPushAt = 0;
 uint32_t gLastMeterAt = 0;
 uint8_t gLastBass[BASS_PARAM_COUNT] = {};
@@ -124,14 +135,96 @@ class ControlCallbacks : public NimBLECharacteristicCallbacks {
   }
 };
 
+// Progress and outcome for the app. Sent on every state change and every
+// kOtaProgressMs while an image is arriving.
+void pushOta() {
+  if (gOtaCtrlChar == nullptr) {
+    return;
+  }
+  const uint32_t got = Ota::received();
+  const uint8_t payload[6] = {(uint8_t)Ota::state(),
+                              (uint8_t)Ota::error(),
+                              (uint8_t)(got & 0xFFu),
+                              (uint8_t)((got >> 8) & 0xFFu),
+                              (uint8_t)((got >> 16) & 0xFFu),
+                              (uint8_t)((got >> 24) & 0xFFu)};
+  gOtaCtrlChar->setValue(payload, sizeof(payload));
+  gOtaCtrlChar->notify();
+  gLastOtaAt = millis();
+}
+
+uint32_t le32(const uint8_t *p) {
+  return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) |
+         ((uint32_t)p[3] << 24);
+}
+
+class OtaCtrlCallbacks : public NimBLECharacteristicCallbacks {
+  void onWrite(NimBLECharacteristic *chr) override {
+    const std::string v = chr->getValue();
+    if (v.empty()) {
+      return;
+    }
+    const uint8_t *d = reinterpret_cast<const uint8_t *>(v.data());
+    switch (d[0]) {
+      case 0x01:  // BEGIN
+        if (v.size() < 9) {
+          return;
+        }
+        // The lights stop before the first byte lands: an update competes for
+        // flash and CPU with the render loop, and a helmet flashing away while
+        // its firmware is replaced invites someone to unplug it mid-write.
+        Leds::setOn(false);
+        Ota::begin(le32(d + 1), le32(d + 5));
+        break;
+      case 0x02:  // END
+        if (Ota::end()) {
+          pushOta();
+          // Let the notification reach the phone before the radio goes away.
+          gOtaRebootPending = true;
+          gOtaRebootAt = millis();
+          return;
+        }
+        break;
+      case 0x03:  // ABORT
+        Ota::abort();
+        Leds::setOn(true);
+        break;
+      default:
+        return;
+    }
+    pushOta();
+  }
+};
+
+class OtaDataCallbacks : public NimBLECharacteristicCallbacks {
+  void onWrite(NimBLECharacteristic *chr) override {
+    const std::string v = chr->getValue();
+    if (v.empty()) {
+      return;
+    }
+    if (!Ota::write(reinterpret_cast<const uint8_t *>(v.data()), v.size())) {
+      pushOta();  // tell the app at once rather than at the next tick
+    }
+  }
+};
+
 class ServerCallbacks : public NimBLEServerCallbacks {
   void onDisconnect(NimBLEServer *server) override {
+    // A transfer cannot continue without the phone, and a half-written slot
+    // is only dangerous if something later decides to boot it. Dropping it
+    // here means a walk out of range costs nothing but the upload.
+    if (Ota::active()) {
+      Ota::abort();
+      Leds::setOn(true);
+    }
     NimBLEDevice::startAdvertising();
   }
 };
 
 ControlCallbacks gControlCallbacks;
 ServerCallbacks gServerCallbacks;
+OtaCtrlCallbacks gOtaCtrlCallbacks;
+OtaDataCallbacks gOtaDataCallbacks;
 
 void pushState(bool force) {
   const uint8_t mode = Leds::mode();
@@ -236,6 +329,10 @@ void begin() {
 
   NimBLEDevice::init(name);
   NimBLEDevice::setPower(ESP_PWR_LVL_P9);
+  // Everything but an update fits the default 23, but a firmware image at 20
+  // payload bytes a packet would take the best part of an hour. The phone
+  // negotiates down if it cannot manage this.
+  NimBLEDevice::setMTU(517);
 
   NimBLEServer *server = NimBLEDevice::createServer();
   server->setCallbacks(&gServerCallbacks);
@@ -253,6 +350,17 @@ void begin() {
   gMeterChar = service->createCharacteristic(
       kMeterUuid, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
 
+  gOtaCtrlChar = service->createCharacteristic(
+      kOtaCtrlUuid, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::NOTIFY);
+  gOtaCtrlChar->setCallbacks(&gOtaCtrlCallbacks);
+
+  // Write without response: an acknowledgement per chunk would halve the
+  // throughput an image needs, and the progress notifications already tell
+  // the app how far behind the helmet is.
+  NimBLECharacteristic *otaData = service->createCharacteristic(
+      kOtaDataUuid, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
+  otaData->setCallbacks(&gOtaDataCallbacks);
+
   service->start();
 
   NimBLEAdvertising *advertising = NimBLEDevice::getAdvertising();
@@ -264,6 +372,22 @@ void begin() {
 }
 
 void loop() {
+  if (gOtaRebootPending) {
+    // The image is committed and the app has been told. Give the notification
+    // a moment to go out, then come up on the new slot.
+    if (millis() - gOtaRebootAt >= 400) {
+      Ota::reboot();
+    }
+    return;
+  }
+  if (Ota::active()) {
+    // Nothing else goes out while an image is arriving: the state and meter
+    // notifications would be spending airtime the transfer needs.
+    if (millis() - gLastOtaAt >= kOtaProgressMs) {
+      pushOta();
+    }
+    return;
+  }
   pushState(false);
   pushMeter();
 }
