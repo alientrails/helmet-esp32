@@ -51,6 +51,17 @@ object HelmetProtocol {
 
     const val FLAG_FLASH = 0x01
     const val FLAG_MY_COLOUR = 0x02
+    const val FLAG_RAINBOW = 0x04
+
+    // The bass colour is one choice of three carried in two flag bits, so a
+    // combination the UI never sends still has to mean something. These mirror
+    // BassColour and bassColour()/withBassColour() in include/leds.h — keep the
+    // precedence identical or the app and the touchscreen will disagree about
+    // what a helmet is actually doing.
+    const val COLOUR_VIOLET = 0
+    const val COLOUR_MINE = 1
+    const val COLOUR_RAINBOW = 2
+    val COLOUR_NAMES = listOf("Violet", "Mine", "Rainbow")
 
     // Limits, from include/config.h.
     const val BRIGHTNESS_MIN = 8
@@ -99,6 +110,30 @@ object HelmetProtocol {
 
     fun setBass(param: Int, value: Int): ByteArray =
         byteArrayOf(OP_SET_BASS, param.toByte(), value.coerceIn(0, 255).toByte())
+
+    /**
+     * Which of [COLOUR_VIOLET], [COLOUR_MINE], [COLOUR_RAINBOW] a bass flags
+     * byte asks for. Rainbow wins, then my colour, then violet — the order
+     * `bassColour()` uses in the firmware.
+     */
+    fun bassColour(flags: Int): Int = when {
+        (flags and FLAG_RAINBOW) != 0 -> COLOUR_RAINBOW
+        (flags and FLAG_MY_COLOUR) != 0 -> COLOUR_MINE
+        else -> COLOUR_VIOLET
+    }
+
+    /**
+     * [flags] with the colour bits replaced by [choice], leaving [FLAG_FLASH]
+     * alone. Exactly one colour bit is ever set this way.
+     */
+    fun withBassColour(flags: Int, choice: Int): Int {
+        val kept = flags and (FLAG_MY_COLOUR or FLAG_RAINBOW).inv()
+        return when (choice) {
+            COLOUR_MINE -> kept or FLAG_MY_COLOUR
+            COLOUR_RAINBOW -> kept or FLAG_RAINBOW
+            else -> kept
+        }
+    }
 
     // ---- Notifications.
 

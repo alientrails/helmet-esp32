@@ -161,18 +161,15 @@ fun BassSection(
             Spacer(Modifier.height(AtSpace.s3))
             Eyebrow("Colour")
             Spacer(Modifier.height(AtSpace.s2))
-            val mine = (bass.flags and HelmetProtocol.FLAG_MY_COLOUR) != 0
             val flash = (bass.flags and HelmetProtocol.FLAG_FLASH) != 0
             OptionRow(
-                options = listOf("Violet", "Mine"),
-                selected = if (mine) 1 else 0,
+                options = HelmetProtocol.COLOUR_NAMES,
+                selected = HelmetProtocol.bassColour(bass.flags),
                 onSelect = { choice ->
-                    val f = if (choice == 1) {
-                        bass.flags or HelmetProtocol.FLAG_MY_COLOUR
-                    } else {
-                        bass.flags and HelmetProtocol.FLAG_MY_COLOUR.inv()
-                    }
-                    onBass(HelmetProtocol.BASS_FLAGS, f)
+                    onBass(
+                        HelmetProtocol.BASS_FLAGS,
+                        HelmetProtocol.withBassColour(bass.flags, choice),
+                    )
                 },
                 toggle = { m ->
                     OptionCell(

@@ -52,7 +52,37 @@ enum BassStyle : uint8_t {
 // Bass look flags, OR-ed together.
 constexpr uint8_t BASS_FLAG_FLASH = 0x01;      // white flash on the loudest peaks
 constexpr uint8_t BASS_FLAG_MY_COLOUR = 0x02;  // the chosen colour, not violet
+constexpr uint8_t BASS_FLAG_RAINBOW = 0x04;    // a rainbow across the strip
 constexpr uint8_t BASS_FLAGS_DEFAULT = BASS_FLAG_FLASH;
+
+// The colour is one choice of three held in two bits, so a combination the UI
+// never sends still has to mean something: rainbow wins, then my colour, then
+// violet. Use these rather than testing the bits by hand, so the firmware, the
+// touchscreen and the app all resolve an odd pair the same way. The app mirrors
+// them in HelmetProtocol.bassColour()/withBassColour().
+enum BassColour : uint8_t {
+  BASS_COLOUR_VIOLET = 0,
+  BASS_COLOUR_MINE,
+  BASS_COLOUR_RAINBOW,
+  BASS_COLOUR_COUNT
+};
+
+constexpr uint8_t bassColour(uint8_t flags) {
+  return (flags & BASS_FLAG_RAINBOW)     ? BASS_COLOUR_RAINBOW
+         : (flags & BASS_FLAG_MY_COLOUR) ? BASS_COLOUR_MINE
+                                         : BASS_COLOUR_VIOLET;
+}
+
+// [flags] with the colour bits replaced by [choice], leaving BASS_FLAG_FLASH
+// alone. Exactly one colour bit is ever set this way. One return statement and
+// no locals: the firmware builds as C++11, where that is all a constexpr
+// function may be.
+constexpr uint8_t withBassColour(uint8_t flags, uint8_t choice) {
+  return (uint8_t)((flags & (uint8_t)~(BASS_FLAG_MY_COLOUR | BASS_FLAG_RAINBOW)) |
+                   (choice == BASS_COLOUR_MINE      ? BASS_FLAG_MY_COLOUR
+                    : choice == BASS_COLOUR_RAINBOW ? BASS_FLAG_RAINBOW
+                                                    : 0));
+}
 
 // Every Bass setting, by the id that goes over BLE (SET_BASS) and into flash.
 // Append only, like HelmetMode.

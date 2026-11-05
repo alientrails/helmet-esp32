@@ -19,6 +19,13 @@
 //   0x0C SET_BASS        3 bytes [0x0C, param, value], param = BassParam:
 //                        0 sensitivity, 1 gate, 2 kick, 3 decay, 4 band,
 //                        5 style, 6 flags, 7 hum (see leds.h)
+//                        flags bit 0 flash, bit 1 my colour, bit 2 rainbow.
+//                        The two colour bits are one choice of three, so a
+//                        client that sets both gets the order bassColour()
+//                        defines: rainbow, then my colour, then violet.
+//                        Firmware before 1.8.0 masks bit 2 off and answers
+//                        with the flags it kept, so asking an older helmet for
+//                        a rainbow leaves it on violet and says so.
 // State (read/notify) 7b1e8f02-...: 20 bytes, the most one notification
 // carries at the default MTU
 //   [mode, brightness, on, outputLevel, r, g, b, speed, order, count,

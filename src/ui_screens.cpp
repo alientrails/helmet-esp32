@@ -59,8 +59,8 @@ lv_obj_t *bandBtn[BassDsp::BAND_COUNT] = {nullptr};
 lv_obj_t *bandLabel[BassDsp::BAND_COUNT] = {nullptr};
 lv_obj_t *styleBtn[BASS_STYLE_COUNT] = {nullptr};
 lv_obj_t *styleLabel[BASS_STYLE_COUNT] = {nullptr};
-lv_obj_t *colourBtn[2] = {nullptr};  // violet, mine
-lv_obj_t *colourLabel[2] = {nullptr};
+lv_obj_t *colourBtn[BASS_COLOUR_COUNT] = {nullptr};  // violet, mine, rainbow
+lv_obj_t *colourLabel[BASS_COLOUR_COUNT] = {nullptr};
 lv_obj_t *flashBtn = nullptr;
 lv_obj_t *flashLabel = nullptr;
 lv_obj_t *humBtn = nullptr;
@@ -163,10 +163,8 @@ void onStylePressed(lv_event_t *e) {
 }
 
 void onColourPressed(lv_event_t *e) {
-  const bool mine = (uintptr_t)lv_event_get_user_data(e) == 1;
-  const uint8_t flags = Leds::bass(BASS_FLAGS);
-  Leds::setBass(BASS_FLAGS, mine ? (flags | BASS_FLAG_MY_COLOUR)
-                                 : (flags & (uint8_t)~BASS_FLAG_MY_COLOUR));
+  const uint8_t choice = (uint8_t)(uintptr_t)lv_event_get_user_data(e);
+  Leds::setBass(BASS_FLAGS, withBassColour(Leds::bass(BASS_FLAGS), choice));
 }
 
 void onFlashPressed(lv_event_t *) {
@@ -805,13 +803,16 @@ void buildBassPage(lv_obj_t *page) {
                                kStyles[i], onStylePressed, i, &styleLabel[i]);
   }
 
-  // Violet and Mine are one choice; Flash is a separate toggle, so it sits
-  // apart from the pair rather than reading as a third option.
+  // Violet, Mine and Rainbow are one choice; Flash is a separate toggle, so it
+  // sits apart from the three rather than reading as a fourth option -- the
+  // gap before it is wider than the gaps within the group.
   eyebrow(page, "COLOUR", inset, 318);
-  colourBtn[0] = optionButton(page, inset, 334, pairW, "VIOLET", onColourPressed, 0,
-                              &colourLabel[0]);
-  colourBtn[1] = optionButton(page, (lv_coord_t)(inset + pairW + gap), 334, pairW, "MINE",
-                              onColourPressed, 1, &colourLabel[1]);
+  static const char *const kColours[BASS_COLOUR_COUNT] = {"VIOLET", "MINE", "RAINBOW"};
+  const lv_coord_t colourW = (blockW - toggleW - 4 * gap) / 3;
+  for (uint8_t i = 0; i < BASS_COLOUR_COUNT; i++) {
+    colourBtn[i] = optionButton(page, (lv_coord_t)(inset + i * (colourW + gap)), 334, colourW,
+                                kColours[i], onColourPressed, i, &colourLabel[i]);
+  }
   flashBtn = optionButton(page, (lv_coord_t)(inset + blockW - toggleW), 334, toggleW, "FLASH",
                           onFlashPressed, 0, &flashLabel);
 
@@ -1274,9 +1275,10 @@ void sync(uint32_t uptimeSec) {
   }
   const uint8_t flags = Leds::bass(BASS_FLAGS);
   if (flags != shownBass[BASS_FLAGS]) {
-    const bool mine = (flags & BASS_FLAG_MY_COLOUR) != 0;
-    setOptionActive(colourBtn[0], colourLabel[0], !mine);
-    setOptionActive(colourBtn[1], colourLabel[1], mine);
+    const uint8_t colour = bassColour(flags);
+    for (uint8_t i = 0; i < BASS_COLOUR_COUNT; i++) {
+      setOptionActive(colourBtn[i], colourLabel[i], i == colour);
+    }
     setOptionActive(flashBtn, flashLabel, (flags & BASS_FLAG_FLASH) != 0);
     shownBass[BASS_FLAGS] = flags;
   }

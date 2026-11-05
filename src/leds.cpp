@@ -283,6 +283,25 @@ void renderRainbow() {
                delta > 0 ? delta : 1);
 }
 
+// Party flashes the rainbow rather than scrolling it: Rainbow mode next door
+// is the smooth sweep, and two modes doing the same sweep at different rates
+// only ever read as the same mode. The band of hues across the strip is the
+// one Party always had; what changed is that it is cut into flashes and the
+// spectrum jumps between them instead of drifting.
+void renderParty() {
+  constexpr uint32_t kPeriodMs = 240;  // at 1x, so ~4 flashes a second
+  constexpr uint32_t kOnMs = 130;      // and dark for the rest of each one
+  if (gPhase % kPeriodMs >= kOnMs) {
+    fill_solid(gPixels, gLit, CRGB::Black);
+    return;
+  }
+  // A big step between flashes, coprime with the 256-step hue wheel, so
+  // consecutive flashes contrast instead of landing on neighbouring hues and
+  // reading as a slow fade.
+  const uint8_t hue = (uint8_t)(((gPhase / kPeriodMs) * 73u) & 0xFFu);
+  fill_rainbow(gPixels, (int)gLit, hue, 7);
+}
+
 void renderWipe() {
   const uint16_t span = gLit * kSub;
   const uint16_t t = (uint16_t)((gPhase / 6u) % (uint16_t)(span * 2u));
@@ -297,11 +316,24 @@ void renderWipe() {
 // Bass mode's picture. The detector's output arrives as level; style and
 // colour are only how it is drawn, so none of them change what triggers.
 void renderBass(uint8_t level) {
-  CRGB c = (gBassFlags & BASS_FLAG_MY_COLOUR) ? gColor : CRGB(CHSV(192, 255, 255));
-  if ((gBassFlags & BASS_FLAG_FLASH) && level > 210) {
-    c = CRGB::White;
+  // A peak flash is white whatever the colour is, so it reads as the detector
+  // firing rather than as part of the picture.
+  const bool flashing = (gBassFlags & BASS_FLAG_FLASH) && level > 210;
+  if (!flashing && bassColour(gBassFlags) == BASS_COLOUR_RAINBOW) {
+    // A full spectrum over the lit run, drifting on the scaled clock so the
+    // speed slider reaches it like every other pattern. The level scaling
+    // below then does the same work it does for a single colour: the meter
+    // reveals more of the spectrum as it grows, and pulse breathes all of it.
+    const uint8_t delta = gLit > 1 ? (uint8_t)(255u / gLit) : 0;
+    fill_rainbow(gPixels, (int)gLit, (uint8_t)((gPhase / 40u) & 0xFFu),
+                 delta > 0 ? delta : 1);
+  } else {
+    CRGB c = (bassColour(gBassFlags) == BASS_COLOUR_MINE) ? gColor : CRGB(CHSV(192, 255, 255));
+    if (flashing) {
+      c = CRGB::White;
+    }
+    fill_solid(gPixels, gLit, c);
   }
-  fill_solid(gPixels, gLit, c);
   nscale8(gPixels, gLit, level);
   if (gBassStyle == BASS_STYLE_PULSE) {
     return;  // the whole strip at the level
@@ -349,7 +381,7 @@ void renderStrip(uint8_t level) {
 
   switch (gMode) {
     case MODE_PARTY:
-      fill_rainbow(gPixels, (int)gLit, (uint8_t)((gPhase / 12u) & 0xFFu), 7);
+      renderParty();
       break;
     case MODE_BASS:
       renderBass(level);
@@ -543,7 +575,7 @@ void setBass(uint8_t param, uint8_t value) {
     return;
   }
   if (param == BASS_FLAGS) {
-    gBassFlags = value & (BASS_FLAG_FLASH | BASS_FLAG_MY_COLOUR);
+    gBassFlags = value & (BASS_FLAG_FLASH | BASS_FLAG_MY_COLOUR | BASS_FLAG_RAINBOW);
     return;
   }
   portENTER_CRITICAL(&gBassMux);

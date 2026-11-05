@@ -114,9 +114,9 @@ Hold **BOOT**, tap **RST**, release BOOT, then upload. Merged images
 | Long-press select | home, or toggle from home |
 
 Modes: Solid, Breathe, Heartbeat, Slow blink, Fast blink, Strobe, SOS,
-Party (fast rainbow), **Bass** (purple kick meter), Comet, Scanner (Cylon
-sweep), Twinkle, Fire, Rainbow (one spectrum across the strip, drifting),
-Wipe and Chase.
+Party (the rainbow in hard flashes), **Bass** (purple kick meter), Comet,
+Scanner (Cylon sweep), Twinkle, Fire, Rainbow (one spectrum across the strip,
+drifting), Wipe and Chase.
 
 Comet, Scanner, Twinkle, Wipe and Chase are painted in the colour you pick;
 Party, Rainbow and Fire bring their own palette.
@@ -139,8 +139,9 @@ shows the mic level, the noise gate (amber line) and the level a kick has to
 clear (ink notches), and flashes when a kick fires. With nothing playing, set
 **Noise gate** just above where the bar settles; then set **Sensitivity** and
 **Kick** with music on. **Decay** is how long a flash hangs, **Style** picks
-Meter, Pulse or Centre, and **Colour** draws it in violet or your own colour,
-with an optional white **Flash** on the loudest peaks. Everything is saved.
+Meter, Pulse or Centre, and **Colour** draws it in violet, your own colour or
+a rainbow across the strip, with an optional white **Flash** on the loudest
+peaks. Everything is saved.
 
 The MAX9814 sets its *maximum* gain from the GAIN pin, and with nothing
 playing its automatic gain control turns itself all the way up to it:

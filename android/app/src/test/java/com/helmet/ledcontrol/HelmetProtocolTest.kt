@@ -121,5 +121,36 @@ class HelmetProtocolTest {
         assertEquals("Chase", HelmetProtocol.MODE_NAMES.last())
         assertEquals(6, HelmetProtocol.ORDER_NAMES.size) // ORDER_COUNT
         assertEquals(12, HelmetProtocol.PRESETS.size)
+        assertEquals(3, HelmetProtocol.COLOUR_NAMES.size) // BASS_COLOUR_COUNT
+    }
+
+    @Test fun bassColourReadsTheFlagBitsInTheFirmwareOrder() {
+        // Two bits carry one choice of three, so the pair the UI never sends
+        // still has to resolve the same way bassColour() does in leds.h:
+        // rainbow, then my colour, then violet.
+        assertEquals(HelmetProtocol.COLOUR_VIOLET, HelmetProtocol.bassColour(0))
+        assertEquals(HelmetProtocol.COLOUR_VIOLET, HelmetProtocol.bassColour(HelmetProtocol.FLAG_FLASH))
+        assertEquals(HelmetProtocol.COLOUR_MINE, HelmetProtocol.bassColour(0x02))
+        assertEquals(HelmetProtocol.COLOUR_RAINBOW, HelmetProtocol.bassColour(0x04))
+        assertEquals(HelmetProtocol.COLOUR_RAINBOW, HelmetProtocol.bassColour(0x06))
+        // Firmware 1.7.0 masked bit 2 off, so 0x03 is still Mine.
+        assertEquals(HelmetProtocol.COLOUR_MINE, HelmetProtocol.bassColour(0x03))
+    }
+
+    @Test fun settingTheBassColourKeepsFlashAndSetsOneBit() {
+        val flash = HelmetProtocol.FLAG_FLASH
+        assertEquals(flash, HelmetProtocol.withBassColour(flash, HelmetProtocol.COLOUR_VIOLET))
+        assertEquals(flash or 0x02, HelmetProtocol.withBassColour(flash, HelmetProtocol.COLOUR_MINE))
+        assertEquals(flash or 0x04, HelmetProtocol.withBassColour(flash, HelmetProtocol.COLOUR_RAINBOW))
+        // Switching away from rainbow clears it rather than stacking bits.
+        assertEquals(0x02, HelmetProtocol.withBassColour(0x04, HelmetProtocol.COLOUR_MINE))
+        assertEquals(0x04, HelmetProtocol.withBassColour(0x02, HelmetProtocol.COLOUR_RAINBOW))
+        assertEquals(0, HelmetProtocol.withBassColour(0x06, HelmetProtocol.COLOUR_VIOLET))
+        // Flash off stays off, and every result round-trips.
+        for (c in HelmetProtocol.COLOUR_VIOLET..HelmetProtocol.COLOUR_RAINBOW) {
+            val f = HelmetProtocol.withBassColour(0, c)
+            assertEquals(0, f and HelmetProtocol.FLAG_FLASH)
+            assertEquals(c, HelmetProtocol.bassColour(f))
+        }
     }
 }
