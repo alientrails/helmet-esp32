@@ -9,6 +9,7 @@ import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
+import android.bluetooth.BluetoothStatusCodes
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
@@ -17,47 +18,11 @@ import android.content.Context
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
-import java.util.UUID
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-// Mirrors include/ble.h in the firmware. Keep opcodes and mode names in sync
-// with include/leds.h / src/leds.cpp.
-object HelmetProtocol {
-    val SERVICE_UUID: UUID = UUID.fromString("7b1e8f00-2a5d-4e1a-9c3a-2f6b1d8a10e0")
-    val CONTROL_UUID: UUID = UUID.fromString("7b1e8f01-2a5d-4e1a-9c3a-2f6b1d8a10e0")
-    val STATE_UUID: UUID = UUID.fromString("7b1e8f02-2a5d-4e1a-9c3a-2f6b1d8a10e0")
-    val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
-
-    const val OP_SET_MODE: Byte = 0x01
-    const val OP_SET_BRIGHTNESS: Byte = 0x02
-    const val OP_SET_ON: Byte = 0x03
-    const val OP_TOGGLE: Byte = 0x04
-    const val OP_NUDGE_BRIGHTNESS: Byte = 0x05
-    const val OP_SET_COLOR: Byte = 0x06
-    const val OP_SET_SPEED: Byte = 0x07
-    const val OP_SET_ORDER: Byte = 0x08
-    const val OP_SET_COUNT: Byte = 0x09
-    const val OP_SET_MAX_MA: Byte = 0x0A
-
-    // Index order matters: it is what goes over the wire. Append only.
-    val MODE_NAMES = listOf(
-        "Solid", "Breathe", "Heartbeat", "Slow blink",
-        "Fast blink", "Strobe", "SOS", "Party", "Bass",
-        "Comet", "Scanner", "Twinkle", "Fire", "Rainbow", "Wipe", "Chase",
-    )
-}
-
 enum class ConnectionState { DISCONNECTED, SCANNING, CONNECTING, CONNECTED }
-
-data class HelmetState(
-    val mode: Int = 0,
-    val brightness: Int = 0,
-    val on: Boolean = true,
-    val outputLevel: Int = 0,
-    val speed: Int = 128,
-)
 
 @SuppressLint("MissingPermission")
 class HelmetBle(context: Context) {
@@ -68,6 +33,8 @@ class HelmetBle(context: Context) {
 
     private var gatt: BluetoothGatt? = null
     private var controlChar: BluetoothGattCharacteristic? = null
+    private var stateChar: BluetoothGattCharacteristic? = null
+    private var meterChar: BluetoothGattCharacteristic? = null
     private var scanning = false
 
     private val _connectionState = MutableStateFlow(ConnectionState.DISCONNECTED)
@@ -79,10 +46,127 @@ class HelmetBle(context: Context) {
     private val _state = MutableStateFlow(HelmetState())
     val state: StateFlow<HelmetState> = _state.asStateFlow()
 
+    /** Live bass detector reading; only moves while the helmet is in Bass mode. */
+    private val _meter = MutableStateFlow<BassMeter?>(null)
+    val meter: StateFlow<BassMeter?> = _meter.asStateFlow()
+
     private val _lastError = MutableStateFlow<String?>(null)
     val lastError: StateFlow<String?> = _lastError.asStateFlow()
 
     fun isBluetoothEnabled(): Boolean = adapter?.isEnabled == true
+
+    // ------------------------------------------------------------ GATT queue
+    //
+    // Android runs exactly one GATT operation at a time per connection and
+    // silently fails the rest, so every read, write and descriptor write goes
+    // through this queue and the next only starts when the previous one's
+    // callback arrives. It all runs on the main thread; callbacks hop over.
+    //
+    // Writes carry a key, and a write queued behind another with the same key
+    // replaces it: dragging a slider keeps at most one write per control in
+    // the queue, always the newest value, instead of a backlog the helmet is
+    // still working through seconds after you let go.
+
+    private sealed class Op {
+        class Write(val char: BluetoothGattCharacteristic, var value: ByteArray, val key: Int) : Op()
+        class EnableNotify(val char: BluetoothGattCharacteristic) : Op()
+        class Read(val char: BluetoothGattCharacteristic) : Op()
+    }
+
+    private val ops = ArrayDeque<Op>()
+    private var inFlight: Op? = null
+
+    // A stack that never calls back must not wedge every later command.
+    private val opTimeout = Runnable { finishOp() }
+
+    private fun enqueue(op: Op) {
+        mainHandler.post {
+            if (op is Op.Write) {
+                val pending = ops.firstOrNull { it is Op.Write && it.key == op.key } as Op.Write?
+                if (pending != null) {
+                    pending.value = op.value
+                    return@post
+                }
+            }
+            ops.addLast(op)
+            pump()
+        }
+    }
+
+    private fun pump() {
+        if (inFlight != null) return
+        val g = gatt
+        if (g == null) {
+            ops.clear()
+            return
+        }
+        while (ops.isNotEmpty()) {
+            val op = ops.removeFirst()
+            if (start(g, op)) {
+                inFlight = op
+                mainHandler.postDelayed(opTimeout, OP_TIMEOUT_MS)
+                return
+            }
+            // The stack refused it outright; drop it rather than retry forever.
+        }
+    }
+
+    private fun finishOp() {
+        mainHandler.removeCallbacks(opTimeout)
+        inFlight = null
+        pump()
+    }
+
+    private fun clearQueue() {
+        mainHandler.post {
+            mainHandler.removeCallbacks(opTimeout)
+            ops.clear()
+            inFlight = null
+        }
+    }
+
+    private fun start(g: BluetoothGatt, op: Op): Boolean = when (op) {
+        is Op.Write -> writeCharacteristic(g, op.char, op.value)
+        is Op.Read -> g.readCharacteristic(op.char)
+        is Op.EnableNotify -> {
+            g.setCharacteristicNotification(op.char, true)
+            val cccd = op.char.getDescriptor(HelmetProtocol.CCCD_UUID)
+            cccd != null && writeDescriptor(g, cccd, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
+        }
+    }
+
+    private fun writeCharacteristic(
+        g: BluetoothGatt,
+        c: BluetoothGattCharacteristic,
+        value: ByteArray,
+    ): Boolean {
+        val type = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            g.writeCharacteristic(c, value, type) == BluetoothStatusCodes.SUCCESS
+        } else {
+            @Suppress("DEPRECATION")
+            c.writeType = type
+            @Suppress("DEPRECATION")
+            c.value = value
+            @Suppress("DEPRECATION")
+            g.writeCharacteristic(c)
+        }
+    }
+
+    private fun writeDescriptor(
+        g: BluetoothGatt,
+        d: BluetoothGattDescriptor,
+        value: ByteArray,
+    ): Boolean = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        g.writeDescriptor(d, value) == BluetoothStatusCodes.SUCCESS
+    } else {
+        @Suppress("DEPRECATION")
+        d.value = value
+        @Suppress("DEPRECATION")
+        g.writeDescriptor(d)
+    }
+
+    // ------------------------------------------------------------- scanning
 
     fun startScan() {
         val scanner = adapter?.bluetoothLeScanner
@@ -92,6 +176,7 @@ class HelmetBle(context: Context) {
         }
         if (scanning) return
         scanning = true
+        _lastError.value = null
         _connectionState.value = ConnectionState.SCANNING
 
         val filters = listOf(
@@ -146,16 +231,22 @@ class HelmetBle(context: Context) {
         gatt?.disconnect()
     }
 
+    // ------------------------------------------------------------ callbacks
+
     private val gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
             if (newState == BluetoothProfile.STATE_CONNECTED) {
                 g.discoverServices()
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                clearQueue()
                 controlChar = null
+                stateChar = null
+                meterChar = null
                 g.close()
                 if (gatt === g) {
                     gatt = null
                 }
+                _meter.value = null
                 _connectionState.value = ConnectionState.DISCONNECTED
                 if (status != BluetoothGatt.GATT_SUCCESS) {
                     _lastError.value = "Disconnected ($status)"
@@ -176,33 +267,41 @@ class HelmetBle(context: Context) {
                 return
             }
             controlChar = service.getCharacteristic(HelmetProtocol.CONTROL_UUID)
-            val stateChar = service.getCharacteristic(HelmetProtocol.STATE_UUID)
-            if (stateChar != null) {
-                g.setCharacteristicNotification(stateChar, true)
-                val cccd = stateChar.getDescriptor(HelmetProtocol.CCCD_UUID)
-                if (cccd != null) {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        g.writeDescriptor(cccd, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
-                    } else {
-                        @Suppress("DEPRECATION")
-                        cccd.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-                        @Suppress("DEPRECATION")
-                        g.writeDescriptor(cccd)
-                    }
-                }
-                g.readCharacteristic(stateChar)
+            stateChar = service.getCharacteristic(HelmetProtocol.STATE_UUID)
+            // Absent on firmware older than the bass meter; everything else
+            // still works without it.
+            meterChar = service.getCharacteristic(HelmetProtocol.METER_UUID)
+
+            // Subscribe first, then read, so nothing that changes between the
+            // read and the subscription is missed.
+            stateChar?.let {
+                enqueue(Op.EnableNotify(it))
             }
+            meterChar?.let { enqueue(Op.EnableNotify(it)) }
+            stateChar?.let { enqueue(Op.Read(it)) }
             _connectionState.value = ConnectionState.CONNECTED
         }
 
+        override fun onDescriptorWrite(g: BluetoothGatt, d: BluetoothGattDescriptor, status: Int) {
+            mainHandler.post { finishOp() }
+        }
+
+        override fun onCharacteristicWrite(
+            g: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic,
+            status: Int,
+        ) {
+            mainHandler.post { finishOp() }
+        }
+
+        // API 33+ delivers the value directly; older releases only call the
+        // deprecated overloads below. Each event arrives through exactly one.
         override fun onCharacteristicChanged(
             g: BluetoothGatt,
             characteristic: BluetoothGattCharacteristic,
             value: ByteArray,
         ) {
-            if (characteristic.uuid == HelmetProtocol.STATE_UUID) {
-                applyState(value)
-            }
+            onIncoming(characteristic, value)
         }
 
         @Deprecated("Deprecated in Java")
@@ -210,10 +309,8 @@ class HelmetBle(context: Context) {
             g: BluetoothGatt,
             characteristic: BluetoothGattCharacteristic,
         ) {
-            if (characteristic.uuid == HelmetProtocol.STATE_UUID) {
-                @Suppress("DEPRECATION")
-                characteristic.value?.let { applyState(it) }
-            }
+            @Suppress("DEPRECATION")
+            characteristic.value?.let { onIncoming(characteristic, it) }
         }
 
         override fun onCharacteristicRead(
@@ -222,9 +319,8 @@ class HelmetBle(context: Context) {
             value: ByteArray,
             status: Int,
         ) {
-            if (status == BluetoothGatt.GATT_SUCCESS && characteristic.uuid == HelmetProtocol.STATE_UUID) {
-                applyState(value)
-            }
+            if (status == BluetoothGatt.GATT_SUCCESS) onIncoming(characteristic, value)
+            mainHandler.post { finishOp() }
         }
 
         @Deprecated("Deprecated in Java")
@@ -233,63 +329,107 @@ class HelmetBle(context: Context) {
             characteristic: BluetoothGattCharacteristic,
             status: Int,
         ) {
-            if (status == BluetoothGatt.GATT_SUCCESS && characteristic.uuid == HelmetProtocol.STATE_UUID) {
-                @Suppress("DEPRECATION")
-                characteristic.value?.let { applyState(it) }
-            }
+            @Suppress("DEPRECATION")
+            val value = characteristic.value
+            if (status == BluetoothGatt.GATT_SUCCESS && value != null) onIncoming(characteristic, value)
+            mainHandler.post { finishOp() }
         }
     }
 
-    private fun applyState(value: ByteArray) {
-        if (value.size < 4) return
-        _state.value = HelmetState(
-            mode = value[0].toInt() and 0xFF,
-            brightness = value[1].toInt() and 0xFF,
-            on = value[2].toInt() != 0,
-            outputLevel = value[3].toInt() and 0xFF,
-            // Older firmware stops after outputLevel; keep its default.
-            speed = if (value.size >= 8) value[7].toInt() and 0xFF else _state.value.speed,
-        )
+    private fun onIncoming(characteristic: BluetoothGattCharacteristic, value: ByteArray) {
+        when (characteristic.uuid) {
+            HelmetProtocol.STATE_UUID ->
+                HelmetProtocol.parseState(value, _state.value)?.let { _state.value = it }
+            HelmetProtocol.METER_UUID ->
+                _meter.value = HelmetProtocol.parseMeter(value)
+        }
     }
 
-    private fun writeControl(opcode: Byte, arg: Byte) {
-        val g = gatt ?: return
+    // ------------------------------------------------------------- commands
+    //
+    // Each setter writes the command and updates the local state at once, so
+    // the UI never snaps back to the old value while the helmet's
+    // confirmation is still on its way.
+
+    private fun send(key: Int, payload: ByteArray) {
         val c = controlChar ?: return
-        val payload = byteArrayOf(opcode, arg)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            g.writeCharacteristic(c, payload, BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE)
-        } else {
-            @Suppress("DEPRECATION")
-            c.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
-            @Suppress("DEPRECATION")
-            c.value = payload
-            @Suppress("DEPRECATION")
-            g.writeCharacteristic(c)
-        }
+        enqueue(Op.Write(c, payload, key))
+    }
+
+    private fun update(change: (HelmetState) -> HelmetState) {
+        _state.value = change(_state.value)
     }
 
     fun setMode(mode: Int) {
-        writeControl(HelmetProtocol.OP_SET_MODE, mode.toByte())
-        _state.value = _state.value.copy(mode = mode)
+        send(HelmetProtocol.OP_SET_MODE.toInt(), HelmetProtocol.command(HelmetProtocol.OP_SET_MODE, mode))
+        // The firmware switches the lights on with every mode change.
+        update { it.copy(mode = mode, on = true) }
     }
 
     fun setBrightness(brightness: Int) {
-        val clamped = brightness.coerceIn(0, 255)
-        writeControl(HelmetProtocol.OP_SET_BRIGHTNESS, clamped.toByte())
-        _state.value = _state.value.copy(brightness = clamped)
+        val v = brightness.coerceIn(HelmetProtocol.BRIGHTNESS_MIN, 255)
+        send(HelmetProtocol.OP_SET_BRIGHTNESS.toInt(), HelmetProtocol.command(HelmetProtocol.OP_SET_BRIGHTNESS, v))
+        update { it.copy(brightness = v) }
     }
 
     fun setOn(on: Boolean) {
-        writeControl(HelmetProtocol.OP_SET_ON, if (on) 1 else 0)
-        _state.value = _state.value.copy(on = on)
+        send(HelmetProtocol.OP_SET_ON.toInt(), HelmetProtocol.command(HelmetProtocol.OP_SET_ON, if (on) 1 else 0))
+        update { it.copy(on = on) }
     }
 
     fun toggle() {
-        writeControl(HelmetProtocol.OP_TOGGLE, 0)
-        _state.value = _state.value.copy(on = !_state.value.on)
+        send(HelmetProtocol.OP_TOGGLE.toInt(), HelmetProtocol.command(HelmetProtocol.OP_TOGGLE, 0))
+        update { it.copy(on = !it.on) }
+    }
+
+    fun setSpeed(speed: Int) {
+        val v = speed.coerceIn(HelmetProtocol.SPEED_MIN, 255)
+        send(HelmetProtocol.OP_SET_SPEED.toInt(), HelmetProtocol.command(HelmetProtocol.OP_SET_SPEED, v))
+        update { it.copy(speed = v) }
+    }
+
+    fun setColor(r: Int, g: Int, b: Int) {
+        send(HelmetProtocol.OP_SET_COLOR.toInt(), HelmetProtocol.setColor(r, g, b))
+        update { it.copy(r = r, g = g, b = b) }
+    }
+
+    fun setOrder(order: Int) {
+        send(HelmetProtocol.OP_SET_ORDER.toInt(), HelmetProtocol.command(HelmetProtocol.OP_SET_ORDER, order))
+        update { it.copy(order = order) }
+    }
+
+    fun setCount(count: Int) {
+        val v = count.coerceIn(1, HelmetProtocol.LED_COUNT_MAX)
+        send(HelmetProtocol.OP_SET_COUNT.toInt(), HelmetProtocol.command(HelmetProtocol.OP_SET_COUNT, v))
+        // The firmware keeps at least one pixel lit, so a shorter strip can pull
+        // the skip down with it.
+        update { it.copy(count = v, skip = it.skip.coerceAtMost(v - 1)) }
+    }
+
+    fun setSkip(skip: Int) {
+        val v = skip.coerceIn(0, HelmetProtocol.LED_SKIP_MAX)
+        send(HelmetProtocol.OP_SET_SKIP.toInt(), HelmetProtocol.command(HelmetProtocol.OP_SET_SKIP, v))
+        update { it.copy(skip = v.coerceAtMost(it.count - 1)) }
+    }
+
+    fun setMaxMa(milliamps: Int) {
+        val v = milliamps.coerceIn(HelmetProtocol.MAX_MA_MIN, HelmetProtocol.MAX_MA_MAX)
+        send(HelmetProtocol.OP_SET_MAX_MA.toInt(), HelmetProtocol.setMaxMa(v))
+        update { it.copy(maxMa = v / 10 * 10) }
+    }
+
+    fun setBass(param: Int, value: Int) {
+        val v = value.coerceIn(0, 255)
+        // Each bass setting is its own control, so each gets its own write key.
+        send(0x100 + param, HelmetProtocol.setBass(param, v))
+        update { it.copy(bass = it.bass.with(param, v)) }
     }
 
     fun clearError() {
         _lastError.value = null
+    }
+
+    private companion object {
+        const val OP_TIMEOUT_MS = 1500L
     }
 }

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- An empty icon for the Android 12+ system splash. The in-app boot card
+     (ui/BrandSplash.kt) starts from a bare void and pops the mark in, exactly
+     as the CYD does; showing the mark in the system splash first made it
+     appear, vanish, then pop in again. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="#00000000" />
+    <size android:width="108dp" android:height="108dp" />
+</shape>

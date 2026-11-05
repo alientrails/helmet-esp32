@@ -245,7 +245,10 @@ fun TrailSlider(
     }
 }
 
-/** The nine patterns as a 3x3 grid. The running one is tinted phosphor. */
+/**
+ * The patterns, three to a row and as many rows as it takes — sixteen now,
+ * so the page scrolls past them. The running one is tinted phosphor.
+ */
 @Composable
 fun ModeGrid(names: List<String>, selected: Int, onSelect: (Int) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(AtSpace.s2)) {

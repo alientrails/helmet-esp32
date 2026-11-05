@@ -1,12 +1,13 @@
 <resources>
-    <!-- Android 12+ always shows a system splash. Make it the mark on void so it
-         hands straight over to the in-app logo card instead of showing a
-         generic icon first. -->
+    <!-- Android 12+ always shows a system splash. Keep it a bare void, with an
+         empty icon rather than the mark: the in-app boot card pops the mark in
+         from nothing, the same as the CYD, and a mark already on screen first
+         made it vanish and reappear. -->
     <style name="Theme.HelmetLED" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowBackground">@color/at_void</item>
         <item name="android:navigationBarColor">@color/at_void</item>
         <item name="android:statusBarColor">@color/at_void</item>
         <item name="android:windowSplashScreenBackground">@color/at_void</item>
-        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_blank</item>
     </style>
 </resources>

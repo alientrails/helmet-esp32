@@ -41,7 +41,9 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.helmet.ledcontrol.ui.AtSpace
+import com.helmet.ledcontrol.ui.BassSection
 import com.helmet.ledcontrol.ui.BrandSplash
+import com.helmet.ledcontrol.ui.ColourSection
 import com.helmet.ledcontrol.ui.Eyebrow
 import com.helmet.ledcontrol.ui.Hairline
 import com.helmet.ledcontrol.ui.ModeGrid
@@ -49,8 +51,11 @@ import com.helmet.ledcontrol.ui.Panel
 import com.helmet.ledcontrol.ui.PowerSwitch
 import com.helmet.ledcontrol.ui.PrimaryButton
 import com.helmet.ledcontrol.ui.SecondaryButton
+import com.helmet.ledcontrol.ui.SettingSlider
 import com.helmet.ledcontrol.ui.Signal
 import com.helmet.ledcontrol.ui.SignalTag
+import com.helmet.ledcontrol.ui.StripSection
+import com.helmet.ledcontrol.ui.SystemSection
 import com.helmet.ledcontrol.ui.TrailSlider
 import com.helmet.ledcontrol.ui.VerticalHairline
 import com.helmet.ledcontrol.ui.theme.AlienTrails
@@ -98,7 +103,7 @@ class MainActivity : ComponentActivity() {
                             onFinished = { showSplash = false },
                         )
                     } else {
-                        HelmetScreen(ble = ble, onConnectClick = { requestScan() })
+                        HelmetScreen(ble = ble, appVersion = version, onConnectClick = { requestScan() })
                     }
                 }
             }
@@ -133,10 +138,11 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun HelmetScreen(ble: HelmetBle, onConnectClick: () -> Unit) {
+fun HelmetScreen(ble: HelmetBle, appVersion: String, onConnectClick: () -> Unit) {
     val connectionState by ble.connectionState.collectAsState()
     val deviceName by ble.deviceName.collectAsState()
     val state by ble.state.collectAsState()
+    val meter by ble.meter.collectAsState()
     val error by ble.lastError.collectAsState()
     var brightnessDrag by remember { mutableStateOf<Float?>(null) }
     val connected = connectionState == ConnectionState.CONNECTED
@@ -183,6 +189,8 @@ fun HelmetScreen(ble: HelmetBle, onConnectClick: () -> Unit) {
                     PowerSwitch(checked = state.on, onCheckedChange = { ble.setOn(it) })
                 }
 
+                // Brightness and speed together, as on the CYD's header row:
+                // both are adjusted mid-ride, so neither hides further down.
                 Panel {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Eyebrow("Brightness", Modifier.weight(1f))
@@ -192,12 +200,22 @@ fun HelmetScreen(ble: HelmetBle, onConnectClick: () -> Unit) {
                     Spacer(Modifier.height(AtSpace.s2))
                     TrailSlider(
                         value = brightnessDrag ?: (state.brightness / 255f),
-                        onValueChange = { brightnessDrag = it },
-                        onValueChangeFinished = {
-                            brightnessDrag?.let { ble.setBrightness((it * 255).toInt()) }
-                            brightnessDrag = null
+                        // Sent while dragging, so the helmet follows the finger;
+                        // the BLE queue keeps only the newest value in flight.
+                        onValueChange = {
+                            brightnessDrag = it
+                            ble.setBrightness((it * 255).toInt())
                         },
+                        onValueChangeFinished = { brightnessDrag = null },
                     )
+                    if (state.hasSpeed) {
+                        Spacer(Modifier.height(AtSpace.s3))
+                        SettingSlider(
+                            "Speed", state.speed, HelmetProtocol.SPEED_MIN..255,
+                            { "${it * 100 / HelmetProtocol.SPEED_NORMAL}%" },
+                            { ble.setSpeed(it) },
+                        )
+                    }
                 }
 
                 Column(verticalArrangement = Arrangement.spacedBy(AtSpace.s3)) {
@@ -208,6 +226,30 @@ fun HelmetScreen(ble: HelmetBle, onConnectClick: () -> Unit) {
                         onSelect = { ble.setMode(it) },
                     )
                 }
+
+                // The rest of the CYD, in its tab order. Each only shows when
+                // the helmet's firmware reports the fields behind it.
+                if (state.hasColour) {
+                    ColourSection(state, onPick = { r, g, b -> ble.setColor(r, g, b) })
+                }
+                if (state.hasBass) {
+                    BassSection(
+                        state = state,
+                        meter = meter,
+                        onBass = { param, value -> ble.setBass(param, value) },
+                        onSelectBass = { ble.setMode(HelmetProtocol.MODE_BASS) },
+                    )
+                }
+                if (state.hasStrip) {
+                    StripSection(
+                        state = state,
+                        onOrder = { ble.setOrder(it) },
+                        onCount = { ble.setCount(it) },
+                        onSkip = { ble.setSkip(it) },
+                        onMaxMa = { ble.setMaxMa(it) },
+                    )
+                }
+                SystemSection(deviceName, appVersion, state)
             } else {
                 Text(
                     "Power the helmet, then connect. It advertises as Helmet-LED-XXXX " +

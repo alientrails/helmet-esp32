@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -95,13 +97,18 @@ fun BrandSplash(statusLine: String, onFinished: () -> Unit) {
         done()
     }
 
+    // Laid out as the CYD's boot card is: the logo group a little above
+    // centre, the status line typed out near the bottom edge on its own.
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(AlienTrails.Void),
         contentAlignment = Alignment.Center,
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.offset(y = (-24).dp),
+        ) {
             // Mark over wordmark, separated by the mark's clear space (a quarter
             // of its height). Both are the untouched raster masters.
             Image(
@@ -123,24 +130,27 @@ fun BrandSplash(statusLine: String, onFinished: () -> Unit) {
                     .width(272.dp)
                     .alpha(wordAlpha.value),
             )
-            Spacer(Modifier.height(AtSpace.s12))
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(3.dp),
-            ) {
-                // The full line is laid out invisibly so typing never re-centres.
-                Box {
-                    Text(statusLine, style = AtType.label, color = AlienTrails.Void.copy(alpha = 0f))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(statusLine.take(typed), style = AtType.label, color = AlienTrails.InkMuted)
-                        Box(
-                            Modifier
-                                .padding(start = 3.dp)
-                                .size(width = 7.dp, height = 14.dp)
-                                .alpha(if (cursorOn) 1f else 0f)
-                                .background(AlienTrails.Phosphor),
-                        )
-                    }
+        }
+        Row(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+                .padding(bottom = 56.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
+            // The full line is laid out invisibly so typing never re-centres.
+            Box {
+                Text(statusLine, style = AtType.label, color = AlienTrails.Void.copy(alpha = 0f))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(statusLine.take(typed), style = AtType.label, color = AlienTrails.InkMuted)
+                    Box(
+                        Modifier
+                            .padding(start = 3.dp)
+                            .size(width = 7.dp, height = 14.dp)
+                            .alpha(if (cursorOn) 1f else 0f)
+                            .background(AlienTrails.Phosphor),
+                    )
                 }
             }
         }
