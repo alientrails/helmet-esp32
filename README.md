@@ -125,8 +125,29 @@ Every animated mode runs off a scaled clock, so the **Speed** control stretches
 time from an eighth to just under double without changing what a pattern looks
 like. It is on the CYD's header row, and over BLE as opcode `0x07`.
 
-**Bass** uses the MAX9814 on D0. Brightness is output gain. MAX9814 GAIN
-floating = 50 dB; to 3V3 = 40 dB (loud club); to GND = 60 dB (quiet).
+**Bass** reacts to the MAX9814 mic (D0 on the XIAO builds, GPIO35 on the
+CYD). The detector samples at a steady 1 kHz on its own task, band-passes the
+kick drum (or, with **Full**, the whole low end), notches out mains hum, and
+only lights the strip once the signal clears an absolute **noise gate** — so
+silence is dark, however the mic's automatic gain wanders. Its code is
+`src/bass_dsp.cpp`; `tools/bass_test` runs that same code on the host against
+simulated silence, hum and kick drums (`make -C tools/bass_test &&
+tools/bass_test/bass_test`).
+
+Tune it on the CYD's **Bass** tab or the app's Bass section. The input meter
+shows the mic level, the noise gate (amber line) and the level a kick has to
+clear (ink notches), and flashes when a kick fires. With nothing playing, set
+**Noise gate** just above where the bar settles; then set **Sensitivity** and
+**Kick** with music on. **Decay** is how long a flash hangs, **Style** picks
+Meter, Pulse or Centre, and **Colour** draws it in violet or your own colour,
+with an optional white **Flash** on the loudest peaks. Everything is saved.
+
+The MAX9814 sets its *maximum* gain from the GAIN pin, and with nothing
+playing its automatic gain control turns itself all the way up to it:
+unconnected = 60 dB, GND = 50 dB, 3V3 = 40 dB (datasheet). Left floating, it
+amplifies its own hiss and any hum by the full 60 dB. For a helmet, tie GAIN
+to 3V3 or GND — that lowers the noise floor ten- or three-fold, at the cost of
+needing louder music.
 
 If colors look swapped (red/green), the strip is not GRB. On the CYD, pick the
 right order on the **Strip** tab; on the XIAO builds, change

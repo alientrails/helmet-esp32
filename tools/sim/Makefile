@@ -16,7 +16,8 @@ CFLAGS   := -O1 -w
 CXXFLAGS := -O1 -Wall -Wextra -Wno-unused-parameter
 
 LVGL_SRC := $(shell find $(LVGL)/src -name '*.c')
-APP_SRC  := $(ROOT)/src/ui_screens.cpp $(ROOT)/src/ui_theme.cpp $(HERE)preview_main.cpp
+APP_SRC  := $(ROOT)/src/ui_screens.cpp $(ROOT)/src/ui_theme.cpp $(ROOT)/src/bass_dsp.cpp \
+            $(HERE)preview_main.cpp
 BRAND_SRC := $(wildcard $(ROOT)/src/brand/*.c)
 
 LVGL_OBJ := $(patsubst $(LVGL)/%.c,$(BUILD)/lvgl/%.o,$(LVGL_SRC))

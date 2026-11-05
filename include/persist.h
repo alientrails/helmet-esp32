@@ -1,7 +1,9 @@
 #pragma once
 
-// Saves/restores LED mode, brightness, on/off, and color across reboots.
-// Writes are debounced so rapid UI changes don't hammer flash.
+// Saves and restores every LED setting across reboots: mode, brightness,
+// on/off, colour, speed, the strip geometry and the Bass tuning. Changes are
+// noticed by polling, and written once they have held still for 600 ms, so
+// dragging a slider costs one flash write rather than one per step.
 
 namespace Persist {
 void begin();

@@ -1,8 +1,12 @@
 #include "leds.h"
 
 #include <FastLED.h>
+#include <driver/adc.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include <math.h>
 
+#include "bass_dsp.h"
 #include "config.h"
 
 namespace Leds {
@@ -40,14 +44,25 @@ uint32_t gPhase = 0;
 uint32_t gPhaseAt = 0;
 uint16_t gPhaseRem = 0;  // leftover 1/SPEED_NORMAL ticks, carried between frames
 
-float micDc = 2048.0f;
-float micBass = 0.0f;
-float micSub = 0.0f;
-float micEnv = 0.0f;
-float micFloor = 40.0f;
-float micSlow = 40.0f;
-float micPunch = 0.0f;
-uint16_t micPrime = 0;
+// ---- Bass. The detector runs in its own task at a steady 1 kHz (see
+// bassTask()); everything here is the handoff between it and the rest of the
+// firmware, which sets parameters from the UI and BLE tasks and reads the
+// output from the render loop.
+BassDsp::Detector gBass;
+BassDsp::Params gBassParams;  // what the UI/BLE side last set
+volatile uint8_t gBassSeq = 0;  // bumped on every change, so the task copies once
+portMUX_TYPE gBassMux = portMUX_INITIALIZER_UNLOCKED;
+volatile bool gBassActive = false;
+volatile bool gBassResetPending = false;
+volatile uint16_t gBassCostUs = 0;
+uint8_t gBassStyle = BASS_STYLE_METER;
+uint8_t gBassFlags = BASS_FLAGS_DEFAULT;
+TaskHandle_t gBassTask = nullptr;
+
+// Raw capture for the serial console: the task fills it, the console prints.
+uint16_t *volatile gCapBuf = nullptr;
+volatile uint16_t gCapLen = 0;
+volatile uint16_t gCapPos = 0;
 
 const char *kNames[MODE_COUNT] = {
     "Solid",   "Breathe", "Heartbeat", "Slow blink", "Fast blink", "Strobe",
@@ -138,69 +153,67 @@ uint8_t patternDuty(uint32_t now) {
   }
 }
 
-void resetMic() {
-  micDc = 2048.0f;
-  micBass = 0.0f;
-  micSub = 0.0f;
-  micEnv = 0.0f;
-  micFloor = 40.0f;
-  micSlow = 40.0f;
-  micPunch = 0.0f;
-  micPrime = 0;
+// Runs the detector at exactly 1 kHz, whatever the render loop is doing. The
+// loop spends anything from 2 ms to 30 ms a frame depending on what LVGL has
+// to repaint, so a detector stepped from there cannot have meaningful filter
+// corners or decay times -- which is the main reason the old one flickered.
+void bassTask(void *) {
+  TickType_t last = xTaskGetTickCount();
+  uint8_t seenSeq = (uint8_t)(gBassSeq - 1);
+  uint16_t burst[MIC_BURST];
+
+  // analogRead() re-runs pinMode() and reprograms the channel's attenuation on
+  // every call before it converts -- about 85 us a read on the CYD, which at
+  // six reads a millisecond was half a core. The pin is configured once by
+  // begin(), so ADC1 is read directly here, which returns the same raw value
+  // without the setup. ADC2 pins keep the slow, portable path.
+  const int8_t ch = digitalPinToAnalogChannel(PIN_MIC);
+  const bool onAdc1 = ch >= 0 && ch < SOC_ADC_MAX_CHANNEL_NUM;
+  for (;;) {
+    if (!gBassActive) {
+      // Not in Bass mode: no sampling at all, so it costs nothing.
+      vTaskDelay(pdMS_TO_TICKS(20));
+      last = xTaskGetTickCount();
+      continue;
+    }
+    xTaskDelayUntil(&last, 1);
+
+    if (gBassSeq != seenSeq) {
+      BassDsp::Params p;
+      portENTER_CRITICAL(&gBassMux);
+      p = gBassParams;
+      seenSeq = gBassSeq;
+      portEXIT_CRITICAL(&gBassMux);
+      gBass.setParams(p);
+    }
+    if (gBassResetPending) {
+      gBassResetPending = false;
+      gBass.reset();
+    }
+
+    const uint32_t t0 = micros();
+    for (uint8_t i = 0; i < MIC_BURST; i++) {
+      if (onAdc1) {
+        const int v = adc1_get_raw((adc1_channel_t)ch);
+        burst[i] = v < 0 ? 0 : (uint16_t)v;
+      } else {
+        burst[i] = (uint16_t)analogRead(PIN_MIC);
+      }
+    }
+    const uint16_t x = BassDsp::trimmedMean(burst, MIC_BURST);
+    gBassCostUs = (uint16_t)(micros() - t0);
+
+    gBass.process(x);
+
+    uint16_t *cap = gCapBuf;
+    if (cap != nullptr && gCapPos < gCapLen) {
+      cap[gCapPos] = x;
+      gCapPos = gCapPos + 1;
+    }
+  }
 }
 
-uint8_t bassDuty() {
-  for (int i = 0; i < MIC_BURST; i++) {
-    const float x = (float)analogRead(PIN_MIC);
-    micDc += MIC_DC_ALPHA * (x - micDc);
-    const float ac = x - micDc;
-    micBass += MIC_BASS_ALPHA * (ac - micBass);
-    micSub += MIC_SUB_ALPHA * (ac - micSub);
-    float kick = micBass - micSub;
-    if (kick < 0.0f) {
-      kick = -kick;
-    }
-    if (kick > micEnv) {
-      micEnv += MIC_ENV_ATTACK * (kick - micEnv);
-    } else {
-      micEnv += MIC_ENV_RELEASE * (kick - micEnv);
-    }
-  }
-
-  if (micPrime < 60) {
-    micPrime++;
-    micFloor = micEnv;
-    micSlow = micEnv;
-    return 0;
-  }
-
-  micFloor += MIC_FLOOR_ALPHA * (micEnv - micFloor);
-  micSlow += 0.02f * (micEnv - micSlow);
-
-  if (micEnv > micSlow * MIC_PUNCH_RATIO && micEnv > micFloor + MIC_GATE) {
-    micPunch = 1.0f;
-  }
-  micPunch *= MIC_PUNCH_DECAY;
-
-  const float thresh = micFloor * 1.25f + MIC_GATE;
-  const float range = micFloor * 3.5f + 35.0f;
-  float follow = (micEnv - thresh) / range;
-  if (follow < 0.0f) {
-    follow = 0.0f;
-  }
-  if (follow > 1.0f) {
-    follow = 1.0f;
-  }
-
-  float out = follow;
-  if (micPunch > out) {
-    out = micPunch;
-  }
-  if (out < 0.04f) {
-    out = 0.0f;
-  }
-  return (uint8_t)(out * 255.0f + 0.5f);
-}
+uint8_t bassDuty() { return gBass.output(); }
 
 // --------------------------------------------------------------------------
 // Per-pixel patterns
@@ -281,6 +294,43 @@ void renderWipe() {
   }
 }
 
+// Bass mode's picture. The detector's output arrives as level; style and
+// colour are only how it is drawn, so none of them change what triggers.
+void renderBass(uint8_t level) {
+  CRGB c = (gBassFlags & BASS_FLAG_MY_COLOUR) ? gColor : CRGB(CHSV(192, 255, 255));
+  if ((gBassFlags & BASS_FLAG_FLASH) && level > 210) {
+    c = CRGB::White;
+  }
+  fill_solid(gPixels, gLit, c);
+  nscale8(gPixels, gLit, level);
+  if (gBassStyle == BASS_STYLE_PULSE) {
+    return;  // the whole strip at the level
+  }
+
+  // Meter and Centre: a lit run on a dim ground. Pixels outside the run keep
+  // a trace of the level, so the strip reads as one instrument rather than a
+  // bar flickering on and off.
+  if (gBassStyle == BASS_STYLE_CENTRE) {
+    // Distances in half-pixels from the true centre, so an even-length strip
+    // grows symmetrically instead of favouring one side by a pixel.
+    const int32_t reach2 = (int32_t)(((uint32_t)level * gLit) / 255u);
+    for (uint16_t i = 0; i < gLit; i++) {
+      int32_t d2 = 2 * (int32_t)i - ((int32_t)gLit - 1);
+      if (d2 < 0) {
+        d2 = -d2;
+      }
+      if (d2 >= reach2) {
+        gPixels[i].nscale8_video(40);
+      }
+    }
+  } else {
+    const uint16_t lit = (uint16_t)(((uint32_t)level * gLit) / 255u);
+    for (uint16_t i = lit; i < gLit; i++) {
+      gPixels[i].nscale8_video(40);
+    }
+  }
+}
+
 void renderChase() {
   const uint8_t step = (uint8_t)((gPhase / 110u) % 3u);
   for (uint16_t i = 0; i < gLit; i++) {
@@ -301,19 +351,9 @@ void renderStrip(uint8_t level) {
     case MODE_PARTY:
       fill_rainbow(gPixels, (int)gLit, (uint8_t)((gPhase / 12u) & 0xFFu), 7);
       break;
-    case MODE_BASS: {
-      CRGB c = CHSV(192, 255, 255);
-      if (level > 210) {
-        c = CRGB::White;
-      }
-      fill_solid(gPixels, gLit, c);
-      nscale8(gPixels, gLit, level);
-      const uint16_t lit = ((uint16_t)level * gLit) / 255u;
-      for (uint16_t i = lit; i < gLit; i++) {
-        gPixels[i].nscale8_video(40);
-      }
+    case MODE_BASS:
+      renderBass(level);
       break;
-    }
     case MODE_COMET:
       renderComet();
       break;
@@ -399,7 +439,12 @@ void begin() {
   fill_solid(gPixels, LED_COUNT_MAX, CRGB::Black);
   fill_solid(leds, LED_COUNT_MAX, CRGB::Black);
   FastLED.show();
-  resetMic();
+  // The sampler runs on the Arduino core at a priority above loop(), so a
+  // heavy LVGL repaint never delays a sample. On the dual-core chips that also
+  // keeps it off the core where the BLE host's bursts run.
+  gBassActive = gMode == MODE_BASS;
+  xTaskCreatePinnedToCore(bassTask, "bass", 3072, nullptr, 4, &gBassTask,
+                          ARDUINO_RUNNING_CORE);
   gPhaseAt = millis();
 }
 
@@ -423,10 +468,13 @@ void loop() {
 void setMode(uint8_t mode) {
   if (mode < MODE_COUNT) {
     if (gMode != mode && mode == MODE_BASS) {
-      resetMic();
+      gBassResetPending = true;  // re-prime on the bias before trusting output
     }
     gMode = mode;
     gOn = true;
+    // Sampling follows the mode, not the power switch, so the meters keep
+    // working with the lights off -- the quietest moment to set the gate.
+    gBassActive = gMode == MODE_BASS;
   }
 }
 
@@ -487,6 +535,79 @@ void setMaxMilliamps(uint16_t milliamps) {
   gMaxMa = milliamps;
   FastLED.setMaxPowerInVoltsAndMilliamps(5, gMaxMa);
 }
+
+void setBass(uint8_t param, uint8_t value) {
+  // Look settings are only read by the render loop, so no handoff needed.
+  if (param == BASS_STYLE) {
+    gBassStyle = value < BASS_STYLE_COUNT ? value : BASS_STYLE_METER;
+    return;
+  }
+  if (param == BASS_FLAGS) {
+    gBassFlags = value & (BASS_FLAG_FLASH | BASS_FLAG_MY_COLOUR);
+    return;
+  }
+  portENTER_CRITICAL(&gBassMux);
+  switch (param) {
+    case BASS_SENSITIVITY:
+      gBassParams.sensitivity = value;
+      break;
+    case BASS_GATE:
+      gBassParams.gate = value;
+      break;
+    case BASS_KICK:
+      gBassParams.kick = value;
+      break;
+    case BASS_DECAY:
+      gBassParams.decay = value;
+      break;
+    case BASS_BAND:
+      gBassParams.band = value < BassDsp::BAND_COUNT ? value : BassDsp::BAND_KICK;
+      break;
+    case BASS_HUM:
+      gBassParams.hum = value != 0 ? 1 : 0;
+      break;
+    default:
+      break;
+  }
+  gBassSeq = gBassSeq + 1;
+  portEXIT_CRITICAL(&gBassMux);
+}
+
+uint8_t bass(uint8_t param) {
+  switch (param) {
+    case BASS_SENSITIVITY:
+      return gBassParams.sensitivity;
+    case BASS_GATE:
+      return gBassParams.gate;
+    case BASS_KICK:
+      return gBassParams.kick;
+    case BASS_DECAY:
+      return gBassParams.decay;
+    case BASS_BAND:
+      return gBassParams.band;
+    case BASS_STYLE:
+      return gBassStyle;
+    case BASS_FLAGS:
+      return gBassFlags;
+    case BASS_HUM:
+      return gBassParams.hum;
+    default:
+      return 0;
+  }
+}
+
+BassDsp::Meter bassMeter() { return gBass.meter(); }
+bool bassLive() { return gBassActive; }
+uint16_t bassCostUs() { return gBassCostUs; }
+
+void bassCapture(uint16_t *buf, uint16_t n) {
+  gCapBuf = nullptr;  // stop any capture in flight before moving the buffer
+  gCapPos = 0;
+  gCapLen = n;
+  gCapBuf = buf;
+}
+
+bool bassCaptureDone() { return gCapBuf == nullptr || gCapPos >= gCapLen; }
 
 void setOn(bool on) { gOn = on; }
 

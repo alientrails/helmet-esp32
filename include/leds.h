@@ -2,6 +2,8 @@
 
 #include <Arduino.h>
 
+#include "bass_dsp.h"
+
 enum HelmetMode : uint8_t {
   MODE_SOLID = 0,
   MODE_BREATHE,
@@ -39,6 +41,33 @@ enum LedOrder : uint8_t {
   ORDER_COUNT
 };
 
+// How Bass mode draws its output on the strip.
+enum BassStyle : uint8_t {
+  BASS_STYLE_METER = 0,  // a bar that grows along the strip, on a dim ground
+  BASS_STYLE_PULSE,      // the whole strip breathes with the beat
+  BASS_STYLE_CENTRE,     // grows out from the middle in both directions
+  BASS_STYLE_COUNT
+};
+
+// Bass look flags, OR-ed together.
+constexpr uint8_t BASS_FLAG_FLASH = 0x01;      // white flash on the loudest peaks
+constexpr uint8_t BASS_FLAG_MY_COLOUR = 0x02;  // the chosen colour, not violet
+constexpr uint8_t BASS_FLAGS_DEFAULT = BASS_FLAG_FLASH;
+
+// Every Bass setting, by the id that goes over BLE (SET_BASS) and into flash.
+// Append only, like HelmetMode.
+enum BassParam : uint8_t {
+  BASS_SENSITIVITY = 0,  // 0..255
+  BASS_GATE,             // meter units, see BassDsp::kMeterDiv
+  BASS_KICK,             // 0..255
+  BASS_DECAY,            // 0..255
+  BASS_BAND,             // BassDsp::Band
+  BASS_STYLE,            // BassStyle
+  BASS_FLAGS,            // BASS_FLAG_*
+  BASS_HUM,              // 0 off, 1 notch out mains hum
+  BASS_PARAM_COUNT
+};
+
 namespace Leds {
 void begin();
 void loop();
@@ -65,6 +94,23 @@ void setMaxMilliamps(uint16_t milliamps);
 // this shortens the canvas rather than blanking part of the picture. Clamped
 // to leave at least one pixel lit.
 void setSkip(uint16_t skip);
+
+// Bass tuning and look, by BassParam id. Values out of range are clamped.
+// Safe to call from any task: the detector runs on its own and picks changes
+// up on its next sample.
+void setBass(uint8_t param, uint8_t value);
+uint8_t bass(uint8_t param);
+
+// Live detector reading for the meters. Only moving while bassLive().
+BassDsp::Meter bassMeter();
+bool bassLive();  // the 1 kHz sampler is running, i.e. the mode is Bass
+
+// Telemetry for the serial console. bassCostUs() is how long one sample's
+// burst of reads took. bassCapture() records the next n samples into buf from
+// the sampler task; poll bassCaptureDone() before reading it.
+uint16_t bassCostUs();
+void bassCapture(uint16_t *buf, uint16_t n);
+bool bassCaptureDone();
 
 uint8_t mode();
 uint8_t brightness();

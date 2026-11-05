@@ -13,9 +13,10 @@
 //   0..38    top bar    — mark, running mode, BLE signal tag, power switch
 //   38..40   pulse      — live PWM output, painted in the strip's own colour
 //   40..84   controls   — brightness (the trail) and speed, side by side
-//   84..206  tab pages  — Modes (4x4) / Colour (ring + presets) /
-//                         Strip (wiring + power) / System
-//   206..240 tab bar    — MODES · COLOUR · STRIP · SYSTEM
+//   84..206  tab pages  — Modes (3 across) / Colour (ring + presets) /
+//                         Bass (meter + tuning) / Strip (wiring + power) /
+//                         System
+//   206..240 tab bar    — MODES · COLOUR · BASS · STRIP · SYSTEM
 
 namespace UiScreens {
 namespace {
@@ -45,6 +46,25 @@ lv_obj_t *maxMaSlider = nullptr;
 lv_obj_t *maxMaValue = nullptr;
 lv_obj_t *skipSlider = nullptr;
 lv_obj_t *skipValue = nullptr;
+
+// Bass page. The tab index is fixed by the order in build().
+constexpr uint16_t kBassTab = 2;
+lv_obj_t *bassMeterObj = nullptr;
+lv_obj_t *bassMeterHint = nullptr;
+lv_obj_t *bassReading = nullptr;
+lv_obj_t *bassKickPip = nullptr;
+lv_obj_t *bassSlider[4] = {nullptr};  // indexed by BassParam 0..3
+lv_obj_t *bassValue[4] = {nullptr};
+lv_obj_t *bandBtn[BassDsp::BAND_COUNT] = {nullptr};
+lv_obj_t *bandLabel[BassDsp::BAND_COUNT] = {nullptr};
+lv_obj_t *styleBtn[BASS_STYLE_COUNT] = {nullptr};
+lv_obj_t *styleLabel[BASS_STYLE_COUNT] = {nullptr};
+lv_obj_t *colourBtn[2] = {nullptr};  // violet, mine
+lv_obj_t *colourLabel[2] = {nullptr};
+lv_obj_t *flashBtn = nullptr;
+lv_obj_t *flashLabel = nullptr;
+lv_obj_t *humBtn = nullptr;
+lv_obj_t *humLabel = nullptr;
 lv_obj_t *sysBleValue = nullptr;
 lv_obj_t *sysUptimeValue = nullptr;
 
@@ -61,6 +81,23 @@ uint16_t shownCount = 0xFFFF;
 uint16_t shownMaxMa = 0xFFFF;
 uint16_t shownSkip = 0xFFFF;
 uint16_t shownLit = 0xFFFF;
+// Filled with "never shown" in begin-of-build, so every control paints on the
+// first sync whatever its value -- a literal initialiser here silently left
+// any newer BassParam at 0, which reads as "already shown".
+uint16_t shownBass[BASS_PARAM_COUNT];
+
+// The meter repaints on its own fast timer, not in sync(), so these are its
+// own mirror of the detector.
+bool meterLive = false;
+bool meterLiveValid = false;
+uint8_t meterLevel = 0;
+uint8_t meterTrigger = 0;
+uint8_t meterGate = 0;
+uint8_t meterOut = 0;
+uint8_t meterKicks = 0;
+bool meterKicksValid = false;
+uint32_t meterKickAt = 0;
+bool meterKickLit = false;
 bool shownOn = false;
 uint8_t shownR = 0, shownG = 0, shownB = 0;
 bool shownColorValid = false;
@@ -109,6 +146,34 @@ void onCountChanged(lv_event_t *e) {
 void onSkipChanged(lv_event_t *e) {
   Leds::setSkip((uint16_t)lv_slider_get_value(lv_event_get_target(e)));
 }
+
+// One handler for the four tuning sliders; each carries its BassParam id.
+void onBassSlider(lv_event_t *e) {
+  lv_obj_t *slider = lv_event_get_target(e);
+  Leds::setBass((uint8_t)(uintptr_t)lv_obj_get_user_data(slider),
+                (uint8_t)lv_slider_get_value(slider));
+}
+
+void onBandPressed(lv_event_t *e) {
+  Leds::setBass(BASS_BAND, (uint8_t)(uintptr_t)lv_event_get_user_data(e));
+}
+
+void onStylePressed(lv_event_t *e) {
+  Leds::setBass(BASS_STYLE, (uint8_t)(uintptr_t)lv_event_get_user_data(e));
+}
+
+void onColourPressed(lv_event_t *e) {
+  const bool mine = (uintptr_t)lv_event_get_user_data(e) == 1;
+  const uint8_t flags = Leds::bass(BASS_FLAGS);
+  Leds::setBass(BASS_FLAGS, mine ? (flags | BASS_FLAG_MY_COLOUR)
+                                 : (flags & (uint8_t)~BASS_FLAG_MY_COLOUR));
+}
+
+void onFlashPressed(lv_event_t *) {
+  Leds::setBass(BASS_FLAGS, Leds::bass(BASS_FLAGS) ^ BASS_FLAG_FLASH);
+}
+
+void onHumPressed(lv_event_t *) { Leds::setBass(BASS_HUM, Leds::bass(BASS_HUM) ? 0 : 1); }
 
 void onMaxMaChanged(lv_event_t *e) {
   // Snapped to 50 mA: the slider is 1900 mA wide over 296 px, so raw values
@@ -516,6 +581,244 @@ void buildStripPage(lv_obj_t *page) {
   makeScrollable(page, 8);
 }
 
+// The input meter: the detector's envelope as a bar, with the noise gate and
+// the live kick threshold marked on it. It is what makes tuning possible at
+// all -- with the mic covered you can see exactly where the noise sits and put
+// the gate above it.
+//
+// The two marks differ in shape as well as colour, so they read without
+// colour: the gate is a solid full-height line, the trigger a pair of notches.
+void onMeterDraw(lv_event_t *e) {
+  lv_obj_t *obj = lv_event_get_target(e);
+  lv_draw_ctx_t *ctx = lv_event_get_draw_ctx(e);
+  lv_area_t box;
+  lv_obj_get_coords(obj, &box);
+
+  lv_draw_rect_dsc_t d;
+  lv_draw_rect_dsc_init(&d);
+  d.radius = RADIUS_SM;
+  d.bg_color = col(HULL);
+  d.bg_opa = LV_OPA_COVER;
+  d.border_color = col(LINE_STRONG);
+  d.border_width = 1;
+  d.border_opa = LV_OPA_COVER;
+  lv_draw_rect(ctx, &d, &box);
+  if (!meterLive) {
+    return;
+  }
+
+  const lv_coord_t x0 = box.x1 + 2;
+  const lv_coord_t span = lv_area_get_width(&box) - 4;
+  auto at = [&](uint8_t v) { return (lv_coord_t)(x0 + ((int32_t)span * v) / 255); };
+
+  // The level: ion, or phosphor for the instant a kick fires. Phosphor marks
+  // what is live, and a firing kick is the one live thing on this page.
+  lv_draw_rect_dsc_t f;
+  lv_draw_rect_dsc_init(&f);
+  f.radius = 1;
+  f.bg_opa = LV_OPA_COVER;
+  f.bg_color = meterKickLit ? col(PHOSPHOR) : col(ION);
+  lv_area_t fill = {x0, (lv_coord_t)(box.y1 + 2), at(meterLevel), (lv_coord_t)(box.y2 - 2)};
+  if (fill.x2 > fill.x1) {
+    lv_draw_rect(ctx, &f, &fill);
+  }
+
+  lv_draw_rect_dsc_t m;
+  lv_draw_rect_dsc_init(&m);
+  m.bg_opa = LV_OPA_COVER;
+
+  // Trigger: two ink notches, top and bottom. Drawn first so the gate wins
+  // where they coincide -- which is exactly the case in silence.
+  const lv_coord_t tx = at(meterTrigger);
+  m.bg_color = col(INK);
+  lv_area_t top = {(lv_coord_t)(tx - 1), box.y1, (lv_coord_t)(tx + 1), (lv_coord_t)(box.y1 + 4)};
+  lv_area_t bot = {(lv_coord_t)(tx - 1), (lv_coord_t)(box.y2 - 4), (lv_coord_t)(tx + 1), box.y2};
+  lv_draw_rect(ctx, &m, &top);
+  lv_draw_rect(ctx, &m, &bot);
+
+  // Gate: a solid amber line through the whole bar.
+  const lv_coord_t gx = at(meterGate);
+  m.bg_color = col(AMBER);
+  lv_area_t gate = {(lv_coord_t)(gx - 1), box.y1, gx, box.y2};
+  lv_draw_rect(ctx, &m, &gate);
+}
+
+void setMeterHint(bool live) {
+  if (live) {
+    lv_obj_add_flag(bassMeterHint, LV_OBJ_FLAG_HIDDEN);
+  } else {
+    lv_obj_clear_flag(bassMeterHint, LV_OBJ_FLAG_HIDDEN);
+  }
+}
+
+// 30 Hz, and only while the Bass tab is on screen: sync() at 12 Hz is too slow
+// to show a 100 ms kick, and nobody needs the meter painted when it is hidden.
+void meterTimerCb(lv_timer_t *) {
+  if (tabview == nullptr || lv_tabview_get_tab_act(tabview) != kBassTab) {
+    return;
+  }
+  const bool live = Leds::bassLive();
+  if (!meterLiveValid || live != meterLive) {
+    meterLive = live;
+    meterLiveValid = true;
+    meterKicksValid = false;
+    setMeterHint(live);
+    lv_label_set_text(bassReading, live ? "" : "IDLE");
+    lv_obj_invalidate(bassMeterObj);
+  }
+  if (!live) {
+    return;
+  }
+
+  const BassDsp::Meter mt = Leds::bassMeter();
+  if (!meterKicksValid) {
+    meterKicks = mt.kicks;  // not a kick: just the counter's first reading
+    meterKicksValid = true;
+  } else if (mt.kicks != meterKicks) {
+    meterKicks = mt.kicks;
+    meterKickAt = lv_tick_get();
+  }
+  const bool kickLit = meterKickAt != 0 && lv_tick_elaps(meterKickAt) < 150;
+  const uint8_t gate = Leds::bass(BASS_GATE);
+  if (mt.level == meterLevel && mt.trigger == meterTrigger && mt.out == meterOut &&
+      gate == meterGate && kickLit == meterKickLit) {
+    return;
+  }
+  meterLevel = mt.level;
+  meterTrigger = mt.trigger;
+  meterOut = mt.out;
+  meterGate = gate;
+  meterKickLit = kickLit;
+
+  char buf[24];
+  snprintf(buf, sizeof(buf), "IN %u \xC2\xB7 OUT %u%%", (unsigned)mt.level,
+           (unsigned)((mt.out * 100u + 127u) / 255u));
+  lv_label_set_text(bassReading, buf);
+  lv_obj_set_style_bg_color(bassKickPip, kickLit ? col(PHOSPHOR) : col(LINE_STRONG), 0);
+  lv_obj_invalidate(bassMeterObj);
+}
+
+// A small legend swatch: the mark's colour in the mark's shape.
+void legendSwatch(lv_obj_t *page, lv_coord_t x, lv_coord_t y, lv_coord_t w, lv_coord_t h,
+                  uint32_t colour) {
+  lv_obj_t *sw = slab(page, x, y, w, h);
+  lv_obj_set_style_bg_color(sw, col(colour), 0);
+  lv_obj_set_style_bg_opa(sw, LV_OPA_COVER, 0);
+}
+
+// One option button in a row; the running choice is styled like the running
+// mode, phosphor on phosphor-soft.
+lv_obj_t *optionButton(lv_obj_t *page, lv_coord_t x, lv_coord_t y, lv_coord_t w,
+                       const char *text, lv_event_cb_t cb, uintptr_t index,
+                       lv_obj_t **labelOut) {
+  lv_obj_t *btn = lv_obj_create(page);
+  lv_obj_remove_style_all(btn);
+  lv_obj_set_pos(btn, x, y);
+  lv_obj_set_size(btn, w, 28);
+  lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_style(btn, &styleCard, 0);
+  lv_obj_add_style(btn, &styleCardPressed, LV_STATE_PRESSED);
+  lv_obj_add_style(btn, &styleCardChecked, LV_STATE_CHECKED);
+  lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, (void *)index);
+
+  lv_obj_t *label = lv_label_create(btn);
+  lv_label_set_text(label, text);
+  lv_obj_set_style_text_font(label, &at_mono_11, 0);
+  lv_obj_center(label);
+  *labelOut = label;
+  return btn;
+}
+
+void setOptionActive(lv_obj_t *btn, lv_obj_t *label, bool active) {
+  if (active) {
+    lv_obj_add_state(btn, LV_STATE_CHECKED);
+  } else {
+    lv_obj_clear_state(btn, LV_STATE_CHECKED);
+  }
+  lv_obj_set_style_text_color(label, active ? col(PHOSPHOR) : col(INK_MUTED), 0);
+}
+
+void buildBassPage(lv_obj_t *page) {
+  for (uint16_t &v : shownBass) {
+    v = 0xFFFF;
+  }
+  constexpr lv_coord_t inset = PAD + 2;
+  constexpr lv_coord_t blockW = SCREEN_W - 2 * inset;
+
+  eyebrow(page, "INPUT", inset, 0);
+  bassReading = lv_label_create(page);
+  lv_label_set_text(bassReading, "");
+  lv_obj_set_style_text_font(bassReading, &at_mono_13, 0);
+  lv_obj_set_style_text_color(bassReading, col(INK), 0);
+  lv_obj_align(bassReading, LV_ALIGN_TOP_RIGHT, -inset, -2);
+
+  bassMeterObj = slab(page, inset, 16, blockW, 18);
+  lv_obj_add_event_cb(bassMeterObj, onMeterDraw, LV_EVENT_DRAW_MAIN, nullptr);
+
+  // Shown over the empty bar outside Bass mode, when the sampler is stopped.
+  bassMeterHint = lv_label_create(bassMeterObj);
+  lv_label_set_text(bassMeterHint, "SELECT BASS TO SEE THE INPUT");
+  lv_obj_set_style_text_font(bassMeterHint, &at_mono_11, 0);
+  lv_obj_set_style_text_color(bassMeterHint, col(INK_MUTED), 0);
+  lv_obj_set_style_text_letter_space(bassMeterHint, 1, 0);
+  lv_obj_center(bassMeterHint);
+
+  // Legend: every mark is a shape and a word, never colour alone.
+  constexpr lv_coord_t ly = 40;
+  legendSwatch(page, inset, ly + 1, 2, 10, AMBER);
+  eyebrow(page, "GATE", inset + 7, ly);
+  legendSwatch(page, inset + 52, ly + 1, 3, 3, INK);
+  legendSwatch(page, inset + 52, ly + 8, 3, 3, INK);
+  eyebrow(page, "TRIGGER", inset + 62, ly);
+  bassKickPip = slab(page, inset + blockW - 42, ly + 2, 8, 8);
+  lv_obj_set_style_bg_color(bassKickPip, col(LINE_STRONG), 0);
+  lv_obj_set_style_bg_opa(bassKickPip, LV_OPA_COVER, 0);
+  eyebrow(page, "KICK", inset + blockW - 30, ly);
+
+  static const char *const kTitles[4] = {"SENSITIVITY", "NOISE GATE", "KICK", "DECAY"};
+  for (uint8_t i = 0; i < 4; i++) {
+    bassSlider[i] = buildSliderBlock(page, inset, (lv_coord_t)(58 + i * 38), blockW,
+                                     kTitles[i], 0, 255, onBassSlider, &bassValue[i]);
+    lv_obj_set_user_data(bassSlider[i], (void *)(uintptr_t)i);
+  }
+
+  // Kick and Full are one choice; Hum is a separate filter switch, so it sits
+  // apart from the pair, as Flash does below.
+  constexpr lv_coord_t gap = 6;
+  constexpr lv_coord_t toggleW = 82;
+  const lv_coord_t pairW = (blockW - toggleW - 3 * gap) / 2;
+  eyebrow(page, "BAND", inset, 214);
+  static const char *const kBands[BassDsp::BAND_COUNT] = {"KICK", "FULL"};
+  for (uint8_t i = 0; i < BassDsp::BAND_COUNT; i++) {
+    bandBtn[i] = optionButton(page, (lv_coord_t)(inset + i * (pairW + gap)), 230, pairW,
+                              kBands[i], onBandPressed, i, &bandLabel[i]);
+  }
+  humBtn = optionButton(page, (lv_coord_t)(inset + blockW - toggleW), 230, toggleW, "HUM",
+                        onHumPressed, 0, &humLabel);
+
+  eyebrow(page, "STYLE", inset, 266);
+  static const char *const kStyles[BASS_STYLE_COUNT] = {"METER", "PULSE", "CENTRE"};
+  const lv_coord_t styleW = (blockW - 2 * gap) / 3;
+  for (uint8_t i = 0; i < BASS_STYLE_COUNT; i++) {
+    styleBtn[i] = optionButton(page, (lv_coord_t)(inset + i * (styleW + gap)), 282, styleW,
+                               kStyles[i], onStylePressed, i, &styleLabel[i]);
+  }
+
+  // Violet and Mine are one choice; Flash is a separate toggle, so it sits
+  // apart from the pair rather than reading as a third option.
+  eyebrow(page, "COLOUR", inset, 318);
+  colourBtn[0] = optionButton(page, inset, 334, pairW, "VIOLET", onColourPressed, 0,
+                              &colourLabel[0]);
+  colourBtn[1] = optionButton(page, (lv_coord_t)(inset + pairW + gap), 334, pairW, "MINE",
+                              onColourPressed, 1, &colourLabel[1]);
+  flashBtn = optionButton(page, (lv_coord_t)(inset + blockW - toggleW), 334, toggleW, "FLASH",
+                          onFlashPressed, 0, &flashLabel);
+
+  makeScrollable(page, 8);
+  lv_timer_create(meterTimerCb, 33, nullptr);
+}
+
 // One "Label ........ reading" row plus the hairline under it. Labels are
 // prose (Grotesk), readings are instrument output (Mono).
 lv_obj_t *buildInfoRow(lv_obj_t *page, const char *label, const char *value,
@@ -716,17 +1019,21 @@ void build() {
   lv_obj_set_style_pad_all(content, 0, 0);
   lv_obj_set_style_bg_opa(content, LV_OPA_TRANSP, 0);
 
+  // Order is load-bearing: kBassTab is this page's index.
   lv_obj_t *modesPage = lv_tabview_add_tab(tabview, "MODES");
   lv_obj_t *colorPage = lv_tabview_add_tab(tabview, "COLOUR");
+  lv_obj_t *bassPage = lv_tabview_add_tab(tabview, "BASS");
   lv_obj_t *stripPage = lv_tabview_add_tab(tabview, "STRIP");
   lv_obj_t *systemPage = lv_tabview_add_tab(tabview, "SYSTEM");
   preparePage(modesPage);
   preparePage(colorPage);
+  preparePage(bassPage);
   preparePage(stripPage);
   preparePage(systemPage);
 
   buildModesPage(modesPage);
   buildColorPage(colorPage);
+  buildBassPage(bassPage);
   buildStripPage(stripPage);
   buildSystemPage(systemPage);
 }
@@ -927,6 +1234,56 @@ void sync(uint32_t uptimeSec) {
     shownG = g;
     shownB = b;
     shownColorValid = true;
+  }
+
+  // Bass settings. Readings are in the units each control means: sensitivity
+  // and kick as a share of travel, the gate in the meter's own units so it
+  // matches the bar, decay as the time constant the detector really uses.
+  for (uint8_t i = 0; i < 4; i++) {
+    const uint8_t v = Leds::bass(i);
+    if (v == shownBass[i]) {
+      continue;
+    }
+    if (!lv_obj_has_state(bassSlider[i], LV_STATE_PRESSED)) {
+      lv_slider_set_value(bassSlider[i], v, LV_ANIM_OFF);
+    }
+    char buf[12];
+    if (i == BASS_GATE) {
+      snprintf(buf, sizeof(buf), "%u", (unsigned)v);
+    } else if (i == BASS_DECAY) {
+      snprintf(buf, sizeof(buf), "%u ms", (unsigned)(BassDsp::decayMs(v) + 0.5f));
+    } else {
+      snprintf(buf, sizeof(buf), "%u%%", (unsigned)((v * 100u + 127u) / 255u));
+    }
+    lv_label_set_text(bassValue[i], buf);
+    shownBass[i] = v;
+  }
+  const uint8_t band = Leds::bass(BASS_BAND);
+  if (band != shownBass[BASS_BAND]) {
+    for (uint8_t i = 0; i < BassDsp::BAND_COUNT; i++) {
+      setOptionActive(bandBtn[i], bandLabel[i], i == band);
+    }
+    shownBass[BASS_BAND] = band;
+  }
+  const uint8_t style = Leds::bass(BASS_STYLE);
+  if (style != shownBass[BASS_STYLE]) {
+    for (uint8_t i = 0; i < BASS_STYLE_COUNT; i++) {
+      setOptionActive(styleBtn[i], styleLabel[i], i == style);
+    }
+    shownBass[BASS_STYLE] = style;
+  }
+  const uint8_t flags = Leds::bass(BASS_FLAGS);
+  if (flags != shownBass[BASS_FLAGS]) {
+    const bool mine = (flags & BASS_FLAG_MY_COLOUR) != 0;
+    setOptionActive(colourBtn[0], colourLabel[0], !mine);
+    setOptionActive(colourBtn[1], colourLabel[1], mine);
+    setOptionActive(flashBtn, flashLabel, (flags & BASS_FLAG_FLASH) != 0);
+    shownBass[BASS_FLAGS] = flags;
+  }
+  const uint8_t hum = Leds::bass(BASS_HUM);
+  if (hum != shownBass[BASS_HUM]) {
+    setOptionActive(humBtn, humLabel, hum != 0);
+    shownBass[BASS_HUM] = hum;
   }
 
   lv_bar_set_value(pulseBar, on ? Leds::outputLevel() : 0, LV_ANIM_OFF);

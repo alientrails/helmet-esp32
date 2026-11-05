@@ -24,3 +24,6 @@ tools/sim/build/
 
 # Scratch output dir for the host preview (tools/sim writes frames here)
 .tmp/
+
+# Host test binary for the bass detector
+tools/bass_test/bass_test

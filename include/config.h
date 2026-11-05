@@ -2,7 +2,7 @@
 
 // Helmet LED controller — Seeed XIAO ESP32, USB power bank, 0.91" OLED.
 
-#define HELMET_FW_VERSION "1.6.0"
+#define HELMET_FW_VERSION "1.7.0"
 
 // 0.91" modules are almost always SSD1306 128x32 at 0x3C.
 // If the screen is blank, try 0x3D. If you actually have a 0.96" 128x64,
@@ -53,17 +53,17 @@
   #define PIN_MIC 2         // D0 analog (GPIO2)
 #endif
 
-// MAX9814 / MAX4466 on D0. Burst-sample, keep ~60–120 Hz kicks, drop hats.
-#define MIC_BURST 28
-#define MIC_DC_ALPHA 0.003f
-#define MIC_BASS_ALPHA 0.05f     // ~100 Hz low-pass
-#define MIC_SUB_ALPHA 0.015f     // ~30 Hz, subtracted to make a kick band
-#define MIC_ENV_ATTACK 0.40f
-#define MIC_ENV_RELEASE 0.055f
-#define MIC_FLOOR_ALPHA 0.004f
-#define MIC_PUNCH_DECAY 0.91f
-#define MIC_PUNCH_RATIO 1.48f
-#define MIC_GATE 10.0f
+// MAX9814 / MAX4466 analog out. Sampled at a steady 1 kHz by a task of its
+// own; each sample is the trimmed mean of a burst of MIC_BURST reads, which
+// throws away the ESP32 ADC's single-read spikes. The detector is in
+// src/bass_dsp.cpp, with its tuning defaults in include/bass_dsp.h, and is
+// tested on the host by tools/bass_test.
+//
+// Four reads, trimmed to the middle two, still throws away a single spike. Each
+// read is ~47 us on the CYD even read directly, so six cost 28% of a core; the
+// measured noise is in-band sound rather than ADC hiss, so the extra averaging
+// bought nothing worth that.
+#define MIC_BURST 4
 
 #define BUTTON_INVERT 1  // INPUT_PULLUP, pressed = LOW
 

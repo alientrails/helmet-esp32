@@ -16,9 +16,19 @@
 //   0x09 SET_COUNT       value = pixels, 1..LED_COUNT_MAX
 //   0x0A SET_MAX_MA      value = current budget in tens of mA (50 = 500 mA)
 //   0x0B SET_SKIP        value = hidden pixels at the head, 0..LED_SKIP_MAX
-// State (read/notify) 7b1e8f02-...: 12 bytes
+//   0x0C SET_BASS        3 bytes [0x0C, param, value], param = BassParam:
+//                        0 sensitivity, 1 gate, 2 kick, 3 decay, 4 band,
+//                        5 style, 6 flags, 7 hum (see leds.h)
+// State (read/notify) 7b1e8f02-...: 20 bytes, the most one notification
+// carries at the default MTU
 //   [mode, brightness, on, outputLevel, r, g, b, speed, order, count,
-//    maxMa/10, skip]
+//    maxMa/10, skip, bassSens, bassGate, bassKick, bassDecay, bassBand,
+//    bassStyle, bassFlags, bassHum]
+//   Settings notify as they change; outputLevel alone at most 10 Hz.
+// Bass meter (read/notify) 7b1e8f03-...: 4 bytes
+//   [level, trigger, out, kicks] -- level and trigger in the gate's units,
+//   out 0..255, kicks a wrapping counter. ~25 Hz, only in Bass mode and only
+//   while subscribed.
 //
 // The state payload only ever grows at the end, so a client that reads the
 // first four bytes and stops keeps working across firmware updates.

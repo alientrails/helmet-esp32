@@ -48,6 +48,9 @@ uint8_t sOrder = LED_ORDER_DEFAULT;
 uint16_t sCount = LED_COUNT;
 uint16_t sMaxMa = LED_MAX_MA;
 uint16_t sSkip = LED_SKIP;
+uint8_t sBass[BASS_PARAM_COUNT] = {128, 40, 128, 96, BassDsp::BAND_KICK, BASS_STYLE_METER,
+                                   BASS_FLAGS_DEFAULT, 1};
+BassDsp::Meter sMeter = {23, 40, 0, 0};
 
 const char *kNames[MODE_COUNT] = {
     "Solid",   "Breathe", "Heartbeat", "Slow blink", "Fast blink", "Strobe",
@@ -84,6 +87,15 @@ uint16_t count() { return sCount; }
 uint16_t maxMilliamps() { return sMaxMa; }
 uint16_t skip() { return sSkip; }
 uint16_t lit() { return (uint16_t)(sCount - sSkip); }
+void setBass(uint8_t p, uint8_t v) {
+  if (p < BASS_PARAM_COUNT) sBass[p] = v;
+}
+uint8_t bass(uint8_t p) { return p < BASS_PARAM_COUNT ? sBass[p] : 0; }
+BassDsp::Meter bassMeter() { return sMeter; }
+bool bassLive() { return sMode == MODE_BASS; }
+uint16_t bassCostUs() { return 0; }
+void bassCapture(uint16_t *, uint16_t) {}
+bool bassCaptureDone() { return true; }
 const char *orderName() { return kOrderNames[sOrder]; }
 const char *orderNameAt(uint8_t i) { return i < ORDER_COUNT ? kOrderNames[i] : ""; }
 uint8_t brightnessPercent() { return (uint8_t)((sBri * 100u) / 255u); }
@@ -162,6 +174,28 @@ void capture(const char *dir, const char *name) {
 // Creates outDir and any parent it needs. The documented invocation points at
 // ../../.tmp/preview, which is gitignored and so never exists on a fresh
 // checkout; without this the run dies on the first frame with "cannot write".
+// Scrolls the tab page currently on screen. Inactive pages still exist off to
+// the side of the tabview, so "the first scrollable object" is not good
+// enough: the one wanted is the scrollable page whose left edge is at 0.
+lv_obj_t *visiblePage(lv_obj_t *o) {
+  lv_area_t a;
+  lv_obj_get_coords(o, &a);
+  if (lv_obj_has_flag(o, LV_OBJ_FLAG_SCROLLABLE) && lv_obj_get_scroll_bottom(o) > 0 &&
+      a.x1 == 0) {
+    return o;
+  }
+  for (uint32_t i = 0; i < lv_obj_get_child_cnt(o); i++) {
+    if (lv_obj_t *r = visiblePage(lv_obj_get_child(o, i))) return r;
+  }
+  return nullptr;
+}
+
+void scrollVisiblePage(lv_coord_t y) {
+  if (lv_obj_t *p = visiblePage(lv_scr_act())) {
+    lv_obj_scroll_to_y(p, y, LV_ANIM_OFF);
+  }
+}
+
 bool makeDirs(const char *path) {
   std::string acc;
   for (const char *p = path;; p++) {
@@ -227,15 +261,42 @@ int main(int argc, char **argv) {
   advance(200);
   capture(outDir, "3-colour");
 
+  // Bass, idle: any mode but Bass, so the sampler is stopped and the meter
+  // says so.
   UiScreens::showTab(2);
   advance(200);
-  capture(outDir, "4-strip");
+  capture(outDir, "4a-bass-idle");
+
+  // Bass, live, in the middle of a kick: level over the trigger, which sits
+  // over the gate, and the kick pip lit.
+  sMode = MODE_BASS;
+  sMeter = {150, 96, 0, 7};
+  UiScreens::sync(97);
+  advance(120);  // the meter timer takes its first kick-counter reading
+  sMeter = {176, 96, 214, 8};
+  advance(60);   // ...and sees it move
+  capture(outDir, "4b-bass-kick");
+
+  scrollVisiblePage(140);
+  advance(200);
+  capture(outDir, "4c-bass-tuning");
+
+  scrollVisiblePage(400);
+  advance(200);
+  capture(outDir, "4d-bass-options");
+  scrollVisiblePage(0);
+  sMode = MODE_PARTY;
+  UiScreens::sync(97);
 
   UiScreens::showTab(3);
+  advance(200);
+  capture(outDir, "5-strip");
+
+  UiScreens::showTab(4);
   sBleConnected = true;
   UiScreens::sync(4337);
   advance(200);
-  capture(outDir, "5-system");
+  capture(outDir, "6-system");
 
   // Off, dimmed, warm white — the other end of the state space.
   UiScreens::showTab(0);
@@ -247,7 +308,7 @@ int main(int argc, char **argv) {
   sB = 0x8A;
   UiScreens::sync(4337);
   advance(300);
-  capture(outDir, "6-modes-off");
+  capture(outDir, "7-modes-off");
 
   return 0;
 }
