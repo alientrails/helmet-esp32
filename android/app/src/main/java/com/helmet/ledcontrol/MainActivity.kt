@@ -51,6 +51,7 @@ import com.helmet.ledcontrol.ui.ModeGrid
 import com.helmet.ledcontrol.ui.Panel
 import com.helmet.ledcontrol.ui.PowerSwitch
 import com.helmet.ledcontrol.ui.PrimaryButton
+import com.helmet.ledcontrol.ui.ScreenSection
 import com.helmet.ledcontrol.ui.SecondaryButton
 import com.helmet.ledcontrol.ui.SettingSlider
 import com.helmet.ledcontrol.ui.Signal
@@ -175,6 +176,8 @@ fun HelmetScreen(
     val meter by ble.meter.collectAsState()
     val error by ble.lastError.collectAsState()
     val canUpdate by ble.canUpdate.collectAsState()
+    val canScreen by ble.canScreen.collectAsState()
+    val screenOn by ble.screenOn.collectAsState()
     val ota by ble.ota.collectAsState()
     var brightnessDrag by remember { mutableStateOf<Float?>(null) }
     val connected = connectionState == ConnectionState.CONNECTED
@@ -219,6 +222,13 @@ fun HelmetScreen(
                         )
                     }
                     PowerSwitch(checked = state.on, onCheckedChange = { ble.setOn(it) })
+                }
+
+                // Right under the power switch, because it is its sibling: one
+                // switches off what the helmet shows the world, the other what
+                // it shows you. Hidden against firmware with no pocket mode.
+                if (canScreen) {
+                    ScreenSection(screenOn = screenOn, onScreenChange = { ble.setScreen(it) })
                 }
 
                 // Brightness and speed together, as on the CYD's header row:

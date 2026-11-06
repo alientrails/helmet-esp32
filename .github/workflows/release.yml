@@ -1,0 +1,150 @@
+name: Release
+
+# Pushing a tag is the one action that cuts a release, so there is exactly one
+# place a version comes from:
+#
+#   git tag v1.10.0 && git push origin v1.10.0
+#
+# It builds both firmware targets and the app, attaches the OTA images, the
+# full-flash images, the APK and their checksums, and takes the release notes
+# from .github/release-notes/<tag>.md if that file exists.
+#
+# Signing. Set KEYSTORE_BASE64, KEYSTORE_PASSWORD and KEY_ALIAS as secrets and
+# the APK is release-signed with that key; as *organization* secrets, shared to
+# the repositories that want them, one key signs every app in the org. With
+# the secrets absent the job still runs and ships the debug-signed APK, which
+# installs but cannot upgrade a release-signed one.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write  # creating the release and uploading its assets
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: pio-${{ runner.os }}-
+
+      - run: pip install --upgrade platformio
+
+      # xiao_c3 is left out rather than allowed to fail: a release should not
+      # quietly ship one fewer image than the last one did. See TODO.md.
+      - name: Build firmware
+        run: pio run -e cyd -e xiao_s3
+
+      - name: Merge the full-flash images
+        run: tools/release/merge-images.sh dist cyd xiao_s3
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.3'
+
+      - name: Decode the signing key
+        # A missing secret is not an error: it drops the job back to the
+        # debug-signed APK rather than failing a release. KEYSTORE_FILE is
+        # exported for the later steps, and is also how they tell which of
+        # the two they are packaging.
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            echo "KEYSTORE_FILE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+            echo 'APK signing: release key' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'APK signing: debug (no KEYSTORE_BASE64 secret)' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Build the app
+        working-directory: android
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          # Only needed for a JKS keystore whose key password differs from the
+          # store password. PKCS12 keeps them the same, so this is usually unset.
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -n "${KEYSTORE_FILE:-}" ]; then
+            gradle testDebugUnitTest assembleRelease
+          else
+            gradle testDebugUnitTest assembleDebug
+          fi
+
+      - name: Collect the APK
+        run: |
+          version=$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' android/app/build.gradle.kts)
+          test -n "$version"
+          if [ -n "${KEYSTORE_FILE:-}" ]; then
+            apk=android/app/build/outputs/apk/release/app-release.apk
+            out="dist/helmet-led-$version.apk"
+          else
+            # Named so nobody mistakes it for a distributable build: the debug
+            # key is generated per machine, so two of these cannot upgrade
+            # each other, let alone a release-signed one.
+            apk=android/app/build/outputs/apk/debug/app-debug.apk
+            out="dist/helmet-led-$version-debug.apk"
+          fi
+          cp "$apk" "$out"
+          # Print what actually signed it rather than trusting that it did.
+          # An unsigned APK reaching a release should fail the job here.
+          apksigner=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort | tail -1)
+          "$apksigner" verify --print-certs --verbose "$out"
+
+      - name: Checksums
+        working-directory: dist
+        # The glob is expanded before the redirect creates the file, so
+        # SHA256SUMS.txt does not end up listing itself.
+        run: sha256sum * > SHA256SUMS.txt
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          notes=".github/release-notes/$TAG.md"
+          if [ -f "$notes" ]; then
+            # A leading "# ..." line is the release title, and the rest is the
+            # body -- so the notes file reads as one document in the repo and
+            # still lands on GitHub with the title in the right place.
+            if head -n 1 "$notes" | grep -q '^# '; then
+              title=$(head -n 1 "$notes" | sed 's/^# *//')
+              tail -n +2 "$notes" > "$RUNNER_TEMP/notes.md"
+            else
+              title="$TAG"
+              cp "$notes" "$RUNNER_TEMP/notes.md"
+            fi
+            gh release create "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$title" \
+              --notes-file "$RUNNER_TEMP/notes.md" \
+              dist/*
+          else
+            # No hand-written notes: let GitHub list the merged pull requests
+            # rather than publish an empty body.
+            gh release create "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$TAG" \
+              --generate-notes \
+              dist/*
+          fi

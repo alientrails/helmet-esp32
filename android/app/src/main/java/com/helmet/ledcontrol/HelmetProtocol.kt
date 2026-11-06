@@ -19,6 +19,7 @@ object HelmetProtocol {
     val METER_UUID: UUID = UUID.fromString("7b1e8f03-2a5d-4e1a-9c3a-2f6b1d8a10e0")
     val OTA_CTRL_UUID: UUID = UUID.fromString("7b1e8f04-2a5d-4e1a-9c3a-2f6b1d8a10e0")
     val OTA_DATA_UUID: UUID = UUID.fromString("7b1e8f05-2a5d-4e1a-9c3a-2f6b1d8a10e0")
+    val SCREEN_UUID: UUID = UUID.fromString("7b1e8f06-2a5d-4e1a-9c3a-2f6b1d8a10e0")
     val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
     const val OP_SET_MODE: Byte = 0x01
@@ -33,6 +34,7 @@ object HelmetProtocol {
     const val OP_SET_MAX_MA: Byte = 0x0A
     const val OP_SET_SKIP: Byte = 0x0B
     const val OP_SET_BASS: Byte = 0x0C
+    const val OP_SET_SCREEN: Byte = 0x0D
 
     // BassParam ids for OP_SET_BASS (include/leds.h).
     const val BASS_SENSITIVITY = 0
@@ -112,6 +114,22 @@ object HelmetProtocol {
 
     fun setBass(param: Int, value: Int): ByteArray =
         byteArrayOf(OP_SET_BASS, param.toByte(), value.coerceIn(0, 255).toByte())
+
+    /**
+     * Pocket mode: `false` blanks the helmet's own screen and makes it ignore
+     * its touchscreen or buttons, `true` gives it back. Nothing else about the
+     * helmet changes — the lights keep running and this link stays up, which
+     * is what makes the phone a safe place to keep the only switch.
+     */
+    fun setScreen(on: Boolean): ByteArray =
+        byteArrayOf(OP_SET_SCREEN, if (on) 1 else 0)
+
+    /**
+     * The screen characteristic: one byte, `1` while the helmet's display and
+     * controls are live. Null if the notification was empty.
+     */
+    fun parseScreen(v: ByteArray): Boolean? =
+        if (v.isEmpty()) null else (v[0].toInt() and 0xFF) != 0
 
     /**
      * Which of [COLOUR_VIOLET], [COLOUR_MINE], [COLOUR_RAINBOW] a bass flags

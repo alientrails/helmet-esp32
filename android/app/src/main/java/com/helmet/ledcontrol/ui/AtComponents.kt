@@ -159,12 +159,17 @@ fun SecondaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modi
     }
 }
 
+/** Phosphor when on. [label] is what a screen reader calls it. */
 @Composable
-fun PowerSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+fun PowerSwitch(
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    label: String = "Lights",
+) {
     Switch(
         checked = checked,
         onCheckedChange = onCheckedChange,
-        modifier = Modifier.semantics { contentDescription = "Lights" },
+        modifier = Modifier.semantics { contentDescription = label },
         colors = SwitchDefaults.colors(
             checkedThumbColor = AlienTrails.OnPhosphor,
             checkedTrackColor = AlienTrails.Phosphor,

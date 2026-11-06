@@ -3,12 +3,25 @@
 ## Android app
 
 - [x] **Build it.** It compiled clean on the first pass with no source
-      changes; 17 protocol unit tests now pass and the debug APK builds.
+      changes; 20 protocol unit tests now pass and the debug APK builds.
 - [ ] Check it on a phone against the firmware: the boot card (mark pops in
       from a bare void, no mark in the system splash first), the trail and ion
       slider drags, the hue ring, and the bass meter moving in Bass mode.
 - [ ] Check it against older firmware too: sections the helmet does not
       report (bass, skip) should simply not appear.
+
+## Pocket mode (screen off)
+
+- [ ] Check it on hardware: the CYD's backlight fading down, touch dead while
+      it is off, and the panel coming back up showing current state rather
+      than whatever was on it when it went dark.
+- [ ] Check it survives a reboot in the pocket — the helmet should come up
+      dark with no boot card, and the app's switch should come up off.
+- [ ] Check the XIAO half, which is written but has only been compiled: the
+      OLED powering down, the buttons dropped, and no spurious click when the
+      screen comes back on after a button was held through it.
+- [ ] A kick arriving while the screen is off keeps the bass detector running
+      and the strip flashing, which is intended, but it has not been watched.
 
 ## Firmware
 
@@ -67,5 +80,24 @@
 
 ## Housekeeping
 
-- [ ] Add a CI job that runs `pio run` for `xiao_s3`, `xiao_c3` and `cyd`, plus
-      the `tools/sim` preview build and `tools/bass_test`.
+- [x] **CI.** `.github/workflows/ci.yml` builds `cyd` and `xiao_s3`, renders
+      the `tools/sim` preview, runs `tools/bass_test` and the app's protocol
+      tests, and builds the debug APK. `xiao_c3` is built with
+      `continue-on-error` until the FastLED link failure above is resolved.
+- [x] **Releases.** `.github/workflows/release.yml` publishes on a `v*` tag:
+      app images, merged full-flash images, the APK and checksums, with the
+      body from `.github/release-notes/<tag>.md`.
+- [ ] Neither workflow has run yet — they were written against local builds of
+      the same commands, so the first tag push is also the first real test of
+      the release job.
+- [x] **App signing.** `app/build.gradle.kts` signs the release build from
+      `android/keystore.properties` or `KEYSTORE_FILE`/`KEYSTORE_PASSWORD`/
+      `KEY_ALIAS`, and the release workflow decodes the key from
+      `KEYSTORE_BASE64`. All three paths were checked against a throwaway
+      keystore, which was then destroyed.
+- [ ] Create the real `alientrails` keystore and add it as **organization**
+      secrets, so one key signs every app in the org. Until then a release
+      ships the debug-signed APK, and debug keys are per-machine: two such
+      APKs cannot upgrade each other.
+- [ ] Do the same in the azimuth repo once its app is set up, so both apps
+      share the one key. Nothing of azimuth's is wired up yet.

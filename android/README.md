@@ -20,6 +20,76 @@ in `../include/ble.h`.
    ```bash
    ./gradlew testDebugUnitTest
    ```
+5. CI does the same without a wrapper jar in the tree — it brings its own
+   Gradle (`.github/workflows/ci.yml`), runs those tests and uploads the debug
+   APK as a build artifact. A `v*` tag publishes it as a release asset
+   instead; see the repository README.
+
+Prebuilt APKs are on the
+[releases](https://github.com/alientrails/helmet-esp32/releases) page. Android
+will ask you to allow installing from unknown sources either way.
+
+## Signing
+
+One keystore signs every Alien Trails app. Android only requires that an
+update to a given `applicationId` carry the same key as the version already
+installed, so sharing one key across separate apps is both allowed and normal
+— and it is the only way a release built on CI can replace one built on a
+laptop.
+
+The debug keystore cannot do that job: Gradle generates one per machine, so
+two debug APKs of the same app are signed by different keys and installing the
+second over the first fails with a signature mismatch until you uninstall. A
+release ships a `-debug.apk` only when no signing key is configured.
+
+Make the key once, on a machine you keep, not in CI:
+
+```bash
+keytool -genkeypair -v -keystore alientrails-release.jks -storetype PKCS12 -alias alientrails -keyalg RSA -keysize 4096 -validity 10950 -dname "CN=Alien Trails Labs, O=Alien Trails Labs, C=GB"
+```
+
+Then **back it up**. Losing it means never updating any app signed with it:
+a new key is a new identity, and every user has to uninstall first.
+
+To sign locally, drop an `android/keystore.properties` beside `app/` — it is
+gitignored, along with `*.jks` and `*.keystore`:
+
+```
+storeFile=../alientrails-release.jks
+storePassword=...
+keyAlias=alientrails
+```
+
+With PKCS12 the key password is the store password, so `keyPassword` is only
+needed for a JKS keystore where the two differ.
+
+For CI, the same three values go in as secrets —
+`KEYSTORE_BASE64` (`base64 -w0 alientrails-release.jks`), `KEYSTORE_PASSWORD`
+and `KEY_ALIAS`. Set them as **organization** secrets shared to each
+repository and one key covers every app in the org, which is the point. With
+them absent the release job still runs and ships the debug-signed APK, so a
+fork is never blocked on a key it cannot have.
+
+`app/build.gradle.kts` reads either source, prefers the properties file, and
+signs with v2 and v3 — v1 is only read below API 24 and `minSdk` is 26, and v3
+is what carries a rotation lineage if this key ever has to be replaced.
+
+## Pocket mode: switching the helmet's screen off
+
+**Screen**, in the card under the power switch, blanks the helmet's own
+display and makes it ignore its touchscreen or buttons. It is for the obvious
+reason: the controller rides in a pocket, where a touchscreen is a row of
+buttons being pressed by a thigh.
+
+Everything else carries on — the lights keep running, the mic keeps listening,
+this link stays up — so the way back is always in the app. And it is *only* in
+the app, in both directions, because a screen the helmet could switch back on
+would be switched back on by being sat on. The helmet saves the state, so it
+stays off through a reboot and comes up with no boot card at all.
+
+The control only appears against firmware 1.10.0 and newer, which is where the
+screen characteristic (`7b1e8f06-…`) comes from; older helmets show no switch
+rather than one that would do nothing.
 
 ## Updating the helmet's firmware
 
@@ -77,14 +147,20 @@ card in `ui/BrandSplash.kt`.
    nothing playing, set **Noise gate** just above where the bar settles; then
    adjust **Sensitivity** and **Kick** with music on. **Hum** notches out
    mains hum and is best left on.
-5. Changes made on the helmet show up in the app too — the ESP32 pushes
+5. **Screen.** The switch under the power row is pocket mode — see above.
+   It is the only way to turn the helmet's screen off, and the only way to
+   turn it back on.
+6. Changes made on the helmet show up in the app too — the ESP32 pushes
    state updates over a notify characteristic.
 
 ## Protocol
 
 See `../include/ble.h` for the exact GATT layout: one write characteristic
-for commands, one notify characteristic for the state (20 bytes), and one for
-the live bass meter (4 bytes, streamed only in Bass mode). `HelmetProtocol.kt`
+for commands, one notify characteristic for the state (20 bytes), one for the
+live bass meter (4 bytes, streamed only in Bass mode) and one for pocket mode
+(1 byte). Pocket mode has a characteristic of its own because the state
+payload is already exactly the 20 bytes one notification carries at the
+default MTU — and its presence doubles as the capability flag. `HelmetProtocol.kt`
 is the Android-side mirror and holds all the byte layout as pure functions,
 which `app/src/test` pins down; `HelmetBle.kt` does the Bluetooth.
 

@@ -98,9 +98,41 @@ cd helmet-esp32
 pio run -e xiao_s3 -t upload
 ```
 
-Hold **BOOT**, tap **RST**, release BOOT, then upload. Merged images
-(address `0x0`): `bin/firmware-xiao-s3-merged.bin` (chip ESP32-S3),
-`bin/firmware-xiao-c3-merged.bin` (ESP32-C3).
+Hold **BOOT**, tap **RST**, release BOOT, then upload.
+
+Prebuilt images come from the
+[releases](https://github.com/alientrails/helmet-esp32/releases): the
+`-merged.bin` ones are the whole flash and go on at address `0x0`, and the
+plain `firmware-*.bin` ones are the app images the phone sends over BLE. There
+are older merged images in `bin/` too, kept for the XIAO builds; they predate
+the CYD.
+
+To build them yourself:
+
+```bash
+pio run -e cyd -e xiao_s3
+tools/release/merge-images.sh dist cyd xiao_s3
+```
+
+## Releases and CI
+
+`.github/workflows/ci.yml` builds both firmware targets on every push and pull
+request, renders the CYD screens on the host, and runs the bass detector and
+the app's protocol tests. `xiao_c3` is built too but allowed to fail, for the
+FastLED reason in `TODO.md`.
+
+Pushing a tag is what cuts a release — one action, one place the version comes
+from:
+
+```bash
+git tag v1.10.0 && git push origin v1.10.0
+```
+
+`.github/workflows/release.yml` then builds everything, attaches the app
+images, the merged images, the APK and their checksums, and takes the body
+from `.github/release-notes/<tag>.md` if that file exists (its leading `# `
+line becomes the release title). With no such file it falls back to GitHub's
+own generated notes.
 
 ## Use
 
@@ -112,6 +144,9 @@ Hold **BOOT**, tap **RST**, release BOOT, then upload. Merged images
 | Select on Brightness | left/right change level |
 | Select on Lights | toggle |
 | Long-press select | home, or toggle from home |
+
+While pocket mode is on (see below) the OLED is powered down and these buttons
+do nothing.
 
 Modes: Solid, Breathe, Heartbeat, Slow blink, Fast blink, Strobe, SOS,
 Party (the rainbow in hard flashes), **Bass** (purple kick meter), Comet,
@@ -155,6 +190,27 @@ right order on the **Strip** tab; on the XIAO builds, change
 `LED_ORDER_DEFAULT` in `include/config.h`.
 
 If the OLED is upside down, set `OLED_ROTATION` to `2` in `include/config.h`.
+
+## Pocket mode: the screen off
+
+The controller rides in a pocket, and a touchscreen in a pocket is a row of
+buttons being pressed by a thigh. **Screen** in the app's top card switches
+the helmet's own display and its controls off together: the CYD's panel goes
+void, its backlight dark and its touch ignored; on the XIAO builds the OLED is
+powered down and the three buttons do nothing.
+
+Nothing else stops. The strip keeps running its pattern, the mic keeps
+listening, BLE stays up and a firmware update still works — this is about the
+controls on the helmet, not about what the helmet is doing.
+
+The app is deliberately the only way in **and** the only way out. A screen that
+the helmet could switch back on is a screen that gets switched back on by
+being sat on, which is the problem rather than the fix. The state is saved like
+every other setting, so a power bank that blinks does not wake the screen up
+inside the pocket, and the helmet comes back up dark with no boot card.
+
+If the phone is ever gone, `d` on the serial console toggles it over USB. That
+is the whole escape hatch, and the only one there is.
 
 ## CYD touchscreen build
 
@@ -201,6 +257,9 @@ wears the Alien Trails Labs identity (see [`brand/`](brand/README.md)):
   current budget FastLED holds the strip to. All saved to NVS.
 - **System** — firmware, strip, BLE and uptime, and a touch recalibration
   button.
+
+None of it is reachable in pocket mode: the panel is blank and touch is
+ignored until the app switches the screen back on.
 
 While an update is arriving the screen hands itself over to it completely: the
 strip switches off, a progress bar replaces the tabs, and the one instruction

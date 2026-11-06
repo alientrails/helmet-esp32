@@ -26,12 +26,27 @@
 //                        Firmware before 1.8.0 masks bit 2 off and answers
 //                        with the flags it kept, so asking an older helmet for
 //                        a rainbow leaves it on violet and says so.
+//   0x0D SET_SCREEN      value = 0 screen off (pocket mode), 1 screen on.
+//                        Off blanks the helmet's own display and ignores its
+//                        touch or buttons; the lights, the mic and this link
+//                        all carry on. The phone is the only way in or out of
+//                        it -- see display.h for why that asymmetry matters.
 // State (read/notify) 7b1e8f02-...: 20 bytes, the most one notification
 // carries at the default MTU
 //   [mode, brightness, on, outputLevel, r, g, b, speed, order, count,
 //    maxMa/10, skip, bassSens, bassGate, bassKick, bassDecay, bassBand,
 //    bassStyle, bassFlags, bassHum]
 //   Settings notify as they change; outputLevel alone at most 10 Hz.
+// Screen (read/notify) 7b1e8f06-...: 1 byte
+//   [screenOn]  1 while the helmet's display and controls are live, 0 in
+//   pocket mode. Sent on connect and whenever it changes.
+//
+//   This is a characteristic of its own rather than a 20th byte of the state,
+//   because the state payload is already exactly the 20 bytes one
+//   notification carries at the default MTU. It doubles as the capability
+//   flag: firmware too old to blank its screen does not offer the
+//   characteristic at all, so the app hides the control rather than sending
+//   an opcode that would be ignored.
 // Bass meter (read/notify) 7b1e8f03-...: 4 bytes
 //   [level, trigger, out, kicks] -- level and trigger in the gate's units,
 //   out 0..255, kicks a wrapping counter. ~25 Hz, only in Bass mode and only

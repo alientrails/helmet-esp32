@@ -6,6 +6,7 @@
 #include <Wire.h>
 
 #include "config.h"
+#include "display.h"
 #include "leds.h"
 
 namespace Ui {
@@ -33,6 +34,9 @@ uint32_t lastInput = 0;
 uint32_t lastStatusDraw = 0;
 bool present = false;
 bool dirty = true;
+// Pocket mode (see display.h). What the panel is currently doing, so the
+// transition runs once rather than on every pass.
+bool screenLit = true;
 
 void markDirty() { dirty = true; }
 
@@ -235,12 +239,47 @@ void begin() {
   u8g2.setContrast(255);
   u8g2.setFontPosBaseline();
   lastInput = millis();
+
+  if (!Display::on()) {
+    // Pocket mode survived the reboot: come up dark rather than showing the
+    // splash to the inside of a pocket. The app switches it back on.
+    screenLit = false;
+    u8g2.setPowerSave(1);
+    Serial.println("OLED off (pocket mode) -- switch it on from the app");
+    return;
+  }
+
   gotoScreen(SCREEN_SPLASH);
   render();
   Serial.println("OLED ok");
 }
 
 void loop() {
+  if (!present) {
+    return;
+  }
+
+  // Pocket mode: the panel is powered down and the buttons are dropped in
+  // main.cpp, so there is nothing to draw and nothing that could change what
+  // would be drawn from here.
+  if (!Display::on()) {
+    if (screenLit) {
+      screenLit = false;
+      u8g2.setPowerSave(1);
+      Serial.println("OLED off (pocket mode)");
+    }
+    return;
+  }
+  if (!screenLit) {
+    screenLit = true;
+    u8g2.setPowerSave(0);
+    // Back to the status screen rather than wherever the menu was left: the
+    // helmet has been in a pocket, and a half-open menu is not where anyone
+    // wants to pick it up.
+    gotoScreen(SCREEN_STATUS);
+    Serial.println("OLED on");
+  }
+
   const uint32_t now = millis();
   if (screen == SCREEN_SPLASH && (now - screenAt) >= SPLASH_MS) {
     gotoScreen(SCREEN_STATUS);

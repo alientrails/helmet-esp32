@@ -25,9 +25,11 @@ import com.helmet.ledcontrol.ui.theme.AtType
 import kotlinx.coroutines.delay
 
 // The parts of the one-page layout that mirror the CYD's tabs, in the CYD's
-// order: Colour, Bass, Strip, System. Each only appears when the connected
-// firmware reports the fields it needs, so an older helmet shows the controls
-// it can actually honour and nothing else.
+// order: Colour, Bass, Strip, System — plus Screen, which has no tab because
+// the helmet deliberately offers no way to switch its own screen back on.
+// Each only appears when the connected firmware reports the fields it needs,
+// so an older helmet shows the controls it can actually honour and nothing
+// else.
 
 /** An eyebrow over its panel, the page's section heading. */
 @Composable
@@ -39,6 +41,51 @@ fun Section(title: String, content: @Composable () -> Unit) {
 }
 
 private fun percent(v: Int): String = "${(v * 100 + 127) / 255}%"
+
+/**
+ * Pocket mode: the helmet's own screen and its touch, off together.
+ *
+ * The controller rides in a pocket, where a touchscreen is a row of buttons
+ * being pressed by a thigh. This is deliberately the only switch for it — a
+ * screen that could be woken from the helmet would be woken by being sat on,
+ * which is the problem rather than the fix. Nothing else stops: the lights
+ * keep running their pattern and this link stays up, so the way back is
+ * always here.
+ */
+@Composable
+fun ScreenSection(screenOn: Boolean, onScreenChange: (Boolean) -> Unit) {
+    Panel {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Eyebrow("Screen")
+                    if (!screenOn) {
+                        Spacer(Modifier.width(AtSpace.s2))
+                        SignalTag(Signal.WARN, "Pocket")
+                    }
+                }
+                Spacer(Modifier.height(AtSpace.s1))
+                Text(
+                    if (screenOn) "Touchscreen live" else "Blank \u00b7 touch ignored",
+                    style = AtType.small,
+                    color = if (screenOn) AlienTrails.Ink else AlienTrails.InkMuted,
+                )
+            }
+            PowerSwitch(checked = screenOn, onCheckedChange = onScreenChange, label = "Screen")
+        }
+        if (!screenOn) {
+            Spacer(Modifier.height(AtSpace.s3))
+            // Amber and said in words: this is the one state the helmet cannot
+            // get itself out of, and nobody should meet that as a surprise.
+            Text(
+                "The helmet cannot switch its screen back on \u2014 only this app can. " +
+                    "It stays off through a reboot.",
+                style = AtType.small,
+                color = AlienTrails.Amber,
+            )
+        }
+    }
+}
 
 @Composable
 fun ColourSection(state: HelmetState, onPick: (Int, Int, Int) -> Unit) {

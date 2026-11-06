@@ -2,6 +2,7 @@
 
 #include "ble.h"
 #include "config.h"
+#include "display.h"
 #include "leds.h"
 #include "persist.h"
 #include "ui_touch.h"
@@ -53,6 +54,7 @@ static void handleSerial() {
                   Leds::on(), Leds::modeName(), Leds::brightness(), r, g, b,
                   Leds::speedPercent(), Leds::orderName(), Leds::count(),
                   Leds::maxMilliamps());
+    Serial.printf("screen: %s\n", Display::on() ? "on" : "off (pocket mode)");
     Serial.printf("bass: sens %u gate %u kick %u decay %u band %u style %u flags 0x%02x\n",
                   Leds::bass(BASS_SENSITIVITY), Leds::bass(BASS_GATE), Leds::bass(BASS_KICK),
                   Leds::bass(BASS_DECAY), Leds::bass(BASS_BAND), Leds::bass(BASS_STYLE),
@@ -76,6 +78,12 @@ static void handleSerial() {
       gCapturing = true;
       Serial.println("capturing 2 s of 1 kHz mic samples...");
     }
+  } else if (c == 'd' || c == 'D') {
+    // The escape hatch for pocket mode, which the app is otherwise the only
+    // way out of. A USB cable is the one thing a pocket cannot press.
+    Display::setOn(!Display::on());
+    Persist::markDirty();
+    Serial.printf("screen %s\n", Display::on() ? "on" : "off (pocket mode)");
   } else if (c == 't' || c == 'T') {
     UiTouch::printTouchDebug();
   } else if (c == 'c' || c == 'C') {
