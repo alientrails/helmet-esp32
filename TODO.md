@@ -80,5 +80,16 @@
 
 ## Housekeeping
 
-- [ ] Add a CI job that runs `pio run` for `xiao_s3`, `xiao_c3` and `cyd`, plus
-      the `tools/sim` preview build and `tools/bass_test`.
+- [x] **CI.** `.github/workflows/ci.yml` builds `cyd` and `xiao_s3`, renders
+      the `tools/sim` preview, runs `tools/bass_test` and the app's protocol
+      tests, and builds the debug APK. `xiao_c3` is built with
+      `continue-on-error` until the FastLED link failure above is resolved.
+- [x] **Releases.** `.github/workflows/release.yml` publishes on a `v*` tag:
+      app images, merged full-flash images, the APK and checksums, with the
+      body from `.github/release-notes/<tag>.md`.
+- [ ] Neither workflow has run yet — they were written against local builds of
+      the same commands, so the first tag push is also the first real test of
+      the release job.
+- [ ] The APK a release carries is debug-signed, because the `release`
+      buildType has no signing config. If the app is ever to be distributed
+      properly, that wants a keystore in repository secrets.

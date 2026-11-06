@@ -1,0 +1,96 @@
+name: CI
+
+# Everything that can be checked without a helmet on the bench: both firmware
+# targets compile, the touchscreen layout still renders on the host, the bass
+# detector's own tests pass, and the app's protocol tests pin the byte layout
+# to what src/ble.cpp sends.
+
+on:
+  push:
+    branches: [main]
+    # Tags too, so the host checks and the app's tests run against the exact
+    # commit a release is cut from -- the release workflow itself only builds
+    # and publishes.
+    tags: ['v*']
+  pull_request:
+
+jobs:
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # The toolchain and the library tree are ~400 MB and take minutes to
+      # fetch. Keyed on platformio.ini, which is what decides their versions.
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: pio-${{ runner.os }}-
+
+      - run: pip install --upgrade platformio
+
+      - name: Build firmware
+        run: pio run -e cyd -e xiao_s3
+
+      - name: Build firmware (xiao_c3)
+        # Expected to fail today: fastled/FastLED@^3.9.13 resolves to a
+        # version whose ESP32-C3 PARLIO driver does not link, inside FastLED
+        # itself. Kept visible rather than dropped from CI, so the day it
+        # starts passing is the day this step can stop being allowed to fail.
+        continue-on-error: true
+        run: pio run -e xiao_c3
+
+      # Renders the shipping CYD layout off the real src/ui_screens.cpp. It
+      # catches an LVGL call that cannot work as much as a layout regression,
+      # and it needs the lvgl checkout that the cyd build just fetched.
+      - name: Host preview of the CYD screens
+        run: |
+          make -C tools/sim
+          ./tools/sim/build/preview .tmp/preview
+
+      - name: Bass detector tests
+        run: |
+          make -C tools/bass_test
+          tools/bass_test/bass_test
+
+      # Worth keeping: a layout regression is something you have to look at,
+      # and these are the exact frames the shipping screens render to.
+      - name: Keep the preview frames
+        uses: actions/upload-artifact@v4
+        with:
+          name: cyd-screens
+          path: .tmp/preview
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # The repo carries no Gradle wrapper jar, so CI brings its own Gradle
+      # rather than a binary in the tree. Keep this in step with
+      # android/gradle/wrapper/gradle-wrapper.properties.
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.3'
+
+      - name: Protocol tests and debug APK
+        working-directory: android
+        run: gradle testDebugUnitTest assembleDebug
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: helmet-led-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk

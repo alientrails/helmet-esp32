@@ -98,9 +98,41 @@ cd helmet-esp32
 pio run -e xiao_s3 -t upload
 ```
 
-Hold **BOOT**, tap **RST**, release BOOT, then upload. Merged images
-(address `0x0`): `bin/firmware-xiao-s3-merged.bin` (chip ESP32-S3),
-`bin/firmware-xiao-c3-merged.bin` (ESP32-C3).
+Hold **BOOT**, tap **RST**, release BOOT, then upload.
+
+Prebuilt images come from the
+[releases](https://github.com/alientrails/helmet-esp32/releases): the
+`-merged.bin` ones are the whole flash and go on at address `0x0`, and the
+plain `firmware-*.bin` ones are the app images the phone sends over BLE. There
+are older merged images in `bin/` too, kept for the XIAO builds; they predate
+the CYD.
+
+To build them yourself:
+
+```bash
+pio run -e cyd -e xiao_s3
+tools/release/merge-images.sh dist cyd xiao_s3
+```
+
+## Releases and CI
+
+`.github/workflows/ci.yml` builds both firmware targets on every push and pull
+request, renders the CYD screens on the host, and runs the bass detector and
+the app's protocol tests. `xiao_c3` is built too but allowed to fail, for the
+FastLED reason in `TODO.md`.
+
+Pushing a tag is what cuts a release — one action, one place the version comes
+from:
+
+```bash
+git tag v1.10.0 && git push origin v1.10.0
+```
+
+`.github/workflows/release.yml` then builds everything, attaches the app
+images, the merged images, the APK and their checksums, and takes the body
+from `.github/release-notes/<tag>.md` if that file exists (its leading `# `
+line becomes the release title). With no such file it falls back to GitHub's
+own generated notes.
 
 ## Use
 

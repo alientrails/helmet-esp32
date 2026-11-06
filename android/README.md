@@ -20,6 +20,16 @@ in `../include/ble.h`.
    ```bash
    ./gradlew testDebugUnitTest
    ```
+5. CI does the same without a wrapper jar in the tree — it brings its own
+   Gradle (`.github/workflows/ci.yml`), runs those tests and uploads the debug
+   APK as a build artifact. A `v*` tag publishes it as a release asset
+   instead; see the repository README.
+
+Prebuilt APKs are on the
+[releases](https://github.com/alientrails/helmet-esp32/releases) page. They are
+debug-signed, so Android will ask you to allow installing from unknown
+sources: the `release` buildType carries no signing config, and an unsigned
+APK will not install at all.
 
 ## Pocket mode: switching the helmet's screen off
 
