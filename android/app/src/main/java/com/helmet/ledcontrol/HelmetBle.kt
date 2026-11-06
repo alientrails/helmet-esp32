@@ -37,6 +37,7 @@ class HelmetBle(context: Context) {
     private var meterChar: BluetoothGattCharacteristic? = null
     private var otaCtrlChar: BluetoothGattCharacteristic? = null
     private var otaDataChar: BluetoothGattCharacteristic? = null
+    private var screenChar: BluetoothGattCharacteristic? = null
     private var scanning = false
     private var mtu = DEFAULT_MTU
 
@@ -63,6 +64,18 @@ class HelmetBle(context: Context) {
     /** True when the connected helmet offers the update characteristics. */
     private val _canUpdate = MutableStateFlow(false)
     val canUpdate: StateFlow<Boolean> = _canUpdate.asStateFlow()
+
+    /**
+     * Pocket mode, on its own characteristic rather than in the state payload,
+     * which is full. [canScreen] is false against firmware that does not offer
+     * it; the app then hides the control instead of sending an opcode the
+     * helmet would ignore.
+     */
+    private val _screenOn = MutableStateFlow(true)
+    val screenOn: StateFlow<Boolean> = _screenOn.asStateFlow()
+
+    private val _canScreen = MutableStateFlow(false)
+    val canScreen: StateFlow<Boolean> = _canScreen.asStateFlow()
 
     fun isBluetoothEnabled(): Boolean = adapter?.isEnabled == true
 
@@ -256,6 +269,8 @@ class HelmetBle(context: Context) {
                 controlChar = null
                 stateChar = null
                 meterChar = null
+                screenChar = null
+                _canScreen.value = false
                 g.close()
                 if (gatt === g) {
                     gatt = null
@@ -291,6 +306,9 @@ class HelmetBle(context: Context) {
             otaCtrlChar = service.getCharacteristic(HelmetProtocol.OTA_CTRL_UUID)
             otaDataChar = service.getCharacteristic(HelmetProtocol.OTA_DATA_UUID)
             _canUpdate.value = otaCtrlChar != null && otaDataChar != null
+            // Absent on firmware older than 1.10.0, which has no pocket mode.
+            screenChar = service.getCharacteristic(HelmetProtocol.SCREEN_UUID)
+            _canScreen.value = screenChar != null
 
             // Subscribe first, then read, so nothing that changes between the
             // read and the subscription is missed.
@@ -299,7 +317,12 @@ class HelmetBle(context: Context) {
             }
             meterChar?.let { enqueue(Op.EnableNotify(it)) }
             otaCtrlChar?.let { enqueue(Op.EnableNotify(it)) }
+            screenChar?.let { enqueue(Op.EnableNotify(it)) }
             stateChar?.let { enqueue(Op.Read(it)) }
+            // Read as well as subscribed: a helmet that is already in pocket
+            // mode has nothing to notify, and the switch has to come up in the
+            // position the helmet is actually in.
+            screenChar?.let { enqueue(Op.Read(it)) }
             // Everything but an update fits the default MTU; an image at 20
             // bytes a packet would take the best part of an hour.
             if (otaDataChar != null) {
@@ -376,6 +399,8 @@ class HelmetBle(context: Context) {
                 _meter.value = HelmetProtocol.parseMeter(value)
             HelmetProtocol.OTA_CTRL_UUID ->
                 HelmetProtocol.parseOtaStatus(value)?.let { onOtaStatus(it) }
+            HelmetProtocol.SCREEN_UUID ->
+                HelmetProtocol.parseScreen(value)?.let { _screenOn.value = it }
         }
     }
 
@@ -450,6 +475,18 @@ class HelmetBle(context: Context) {
         val v = milliamps.coerceIn(HelmetProtocol.MAX_MA_MIN, HelmetProtocol.MAX_MA_MAX)
         send(HelmetProtocol.OP_SET_MAX_MA.toInt(), HelmetProtocol.setMaxMa(v))
         update { it.copy(maxMa = v / 10 * 10) }
+    }
+
+    /**
+     * Switches the helmet's own screen and controls off or on. The app is the
+     * only way in or out of pocket mode, so the local value moves at once
+     * rather than waiting for the helmet to confirm — the helmet's own
+     * notification lands a moment later and agrees.
+     */
+    fun setScreen(on: Boolean) {
+        if (screenChar == null) return
+        send(HelmetProtocol.OP_SET_SCREEN.toInt(), HelmetProtocol.setScreen(on))
+        _screenOn.value = on
     }
 
     fun setBass(param: Int, value: Int) {

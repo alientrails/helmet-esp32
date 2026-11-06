@@ -10,6 +10,7 @@
 #include <string.h>
 
 #include "config.h"
+#include "display.h"
 #include "ui_screens.h"
 #include "ui_theme.h"
 
@@ -49,6 +50,13 @@ bool calibrationRequested = false;
 
 constexpr int BACKLIGHT_CHANNEL = 7;
 constexpr uint32_t DRAW_LINES = 40;
+
+// Pocket mode (see display.h). `screenLit` is what the panel is currently
+// showing, so the transition runs once rather than every pass; `blankCover`
+// is a void panel on the top layer that both guarantees a black screen
+// whatever the backlight leaks and swallows any touch that gets through.
+bool screenLit = true;
+lv_obj_t *blankCover = nullptr;
 
 lv_disp_draw_buf_t drawBuf;
 lv_color_t drawPixels[SCREEN_W * DRAW_LINES];
@@ -213,7 +221,10 @@ void touchReadCb(lv_indev_drv_t *, lv_indev_data_t *data) {
   static bool wasDown = false;
 
   int x = 0, y = 0;
-  if (!getMappedTouch(&x, &y)) {
+  // Pocket mode: the panel is dark and whatever is leaning on it is not a
+  // finger. Reported as released rather than simply skipped, so a press that
+  // was in progress when the screen went off cannot land on release.
+  if (!Display::on() || !getMappedTouch(&x, &y)) {
     wasDown = false;
     data->state = LV_INDEV_STATE_RELEASED;
     data->point.x = smoothX;
@@ -232,6 +243,79 @@ void touchReadCb(lv_indev_drv_t *, lv_indev_data_t *data) {
   data->state = LV_INDEV_STATE_PRESSED;
   data->point.x = smoothX;
   data->point.y = smoothY;
+}
+
+// 136 ms either way, which the strip notices as one stutter. Worth it: a
+// backlight that snaps on at full duty in a dark room is unpleasant, and
+// snapping off looks like the helmet died rather than like it was told to.
+void fadeBacklight(bool up) {
+  if (up) {
+    for (int duty = 0; duty <= 255; duty += 15) {
+      ledcWrite(BACKLIGHT_CHANNEL, duty);
+      delay(8);
+    }
+    ledcWrite(BACKLIGHT_CHANNEL, 255);
+  } else {
+    for (int duty = 255; duty >= 0; duty -= 15) {
+      ledcWrite(BACKLIGHT_CHANNEL, duty);
+      delay(8);
+    }
+    ledcWrite(BACKLIGHT_CHANNEL, 0);
+  }
+}
+
+void showBlankCover(bool show) {
+  if (show) {
+    if (blankCover != nullptr) {
+      return;
+    }
+    blankCover = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(blankCover);
+    lv_obj_set_pos(blankCover, 0, 0);
+    lv_obj_set_size(blankCover, SCREEN_W, SCREEN_H);
+    lv_obj_clear_flag(blankCover, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(blankCover, LV_OBJ_FLAG_CLICKABLE);  // swallow touches
+    lv_obj_set_style_bg_color(blankCover, col(VOID), 0);
+    lv_obj_set_style_bg_opa(blankCover, LV_OPA_COVER, 0);
+    lv_timer_handler();  // paint it while the backlight is still up
+    return;
+  }
+  if (blankCover == nullptr) {
+    return;
+  }
+  lv_obj_del(blankCover);
+  blankCover = nullptr;
+  // Nothing has been drawn for however long the helmet was in a pocket, and
+  // the state underneath has moved on, so bring the widgets up to date and
+  // repaint the lot before the backlight comes back.
+  UiScreens::sync(millis() / 1000u);
+  lv_obj_invalidate(lv_scr_act());
+  lv_obj_invalidate(lv_layer_top());
+  lv_timer_handler();
+}
+
+// Picks pocket mode up from whatever set it -- BLE, the serial console, or
+// the saved state at boot.
+void applyScreenState() {
+  const bool want = Display::on();
+  if (want == screenLit) {
+    return;
+  }
+  screenLit = want;
+  if (want) {
+    showBlankCover(false);
+    fadeBacklight(true);
+    Serial.println("screen on");
+    if (!calibrated) {
+      // A panel that first booted in pocket mode was never calibrated, since
+      // there was nobody there to touch the three targets. Now there is.
+      calibrationRequested = true;
+    }
+  } else {
+    showBlankCover(true);
+    fadeBacklight(false);
+    Serial.println("screen off (pocket mode)");
+  }
 }
 
 void runPendingCalibration() {
@@ -262,11 +346,15 @@ void begin() {
   const size_t got = calPrefs.getBytes("cal", calM, sizeof(calM));
   if (got == sizeof(calM)) {
     calibrated = true;
-  } else {
+  } else if (Display::on()) {
     ledcWrite(BACKLIGHT_CHANNEL, 255);
     performCalibration();
     ledcWrite(BACKLIGHT_CHANNEL, 0);
   }
+  // An uncalibrated panel that boots into pocket mode is left alone: there is
+  // nobody down there to touch the three targets, and touch is ignored
+  // anyway. applyScreenState() asks for the calibration the moment the app
+  // switches the screen back on.
 
   lv_init();
   lv_disp_draw_buf_init(&drawBuf, drawPixels, nullptr, SCREEN_W * DRAW_LINES);
@@ -291,14 +379,21 @@ void begin() {
   UiTheme::init();
   UiScreens::build();
   UiScreens::sync(0);
-  UiScreens::showSplash(LOGO_SPLASH_MS);
 
-  lv_timer_handler();  // paint the splash before the backlight comes up
-  for (int duty = 0; duty <= 255; duty += 15) {
-    ledcWrite(BACKLIGHT_CHANNEL, duty);
-    delay(8);
+  if (!Display::on()) {
+    // Pocket mode survived the reboot. Come up dark and silent: showing the
+    // boot card to the inside of a pocket is the one thing this mode exists
+    // to avoid. The app switches it back on.
+    screenLit = false;
+    showBlankCover(true);
+    ledcWrite(BACKLIGHT_CHANNEL, 0);
+    Serial.println("CYD display off (pocket mode) -- switch it on from the app");
+    return;
   }
-  ledcWrite(BACKLIGHT_CHANNEL, 255);
+
+  UiScreens::showSplash(LOGO_SPLASH_MS);
+  lv_timer_handler();  // paint the splash before the backlight comes up
+  fadeBacklight(true);
 
   Serial.println("CYD display+touch ok (LVGL)");
 }
@@ -323,6 +418,14 @@ void printTouchDebug() {
 }
 
 void loop() {
+  applyScreenState();
+  if (!screenLit) {
+    // Nothing to draw and nothing to read. LVGL's timers simply do not run,
+    // which is the point: no repaints, no meter, no touch. A calibration
+    // asked for over serial stays pending until the screen is back.
+    return;
+  }
+
   if (calibrationRequested || UiScreens::takeCalibrationRequest()) {
     runPendingCalibration();
   }

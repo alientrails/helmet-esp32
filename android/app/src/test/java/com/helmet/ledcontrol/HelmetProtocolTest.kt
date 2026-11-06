@@ -194,6 +194,30 @@ class HelmetProtocolTest {
         assertEquals(0, OtaTransfer(HelmetProtocol.OTA_IDLE, 0, 0, 0, 0).percent)
     }
 
+    @Test fun theScreenCommandIsOneOpcodeAndOneFlag() {
+        // applyControl reads data[1] != 0, so any non-zero means on -- but the
+        // app only ever sends the canonical 0 and 1.
+        assertArrayEquals(bytes(0x0D, 1), HelmetProtocol.setScreen(true))
+        assertArrayEquals(bytes(0x0D, 0), HelmetProtocol.setScreen(false))
+    }
+
+    @Test fun parsesTheScreenCharacteristic() {
+        assertEquals(true, HelmetProtocol.parseScreen(bytes(1)))
+        assertEquals(false, HelmetProtocol.parseScreen(bytes(0)))
+        // Any non-zero is on, matching the firmware's own test.
+        assertEquals(true, HelmetProtocol.parseScreen(bytes(0xFF)))
+        // Room was left for the payload to grow; a longer one still parses.
+        assertEquals(true, HelmetProtocol.parseScreen(bytes(1, 0, 0)))
+        assertNull(HelmetProtocol.parseScreen(ByteArray(0)))
+    }
+
+    @Test fun theScreenStateIsNotInTheStatePayload() {
+        // It has its own characteristic precisely because the state payload is
+        // already the full 20 bytes a default-MTU notification carries. If a
+        // 21st byte ever turns up here, this is the reminder that it cannot.
+        assertEquals(20, full.size)
+    }
+
     @Test fun settingTheBassColourKeepsFlashAndSetsOneBit() {
         val flash = HelmetProtocol.FLAG_FLASH
         assertEquals(flash, HelmetProtocol.withBassColour(flash, HelmetProtocol.COLOUR_VIOLET))

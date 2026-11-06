@@ -4,6 +4,7 @@
 #include <NimBLEDevice.h>
 
 #include "config.h"
+#include "display.h"
 #include "leds.h"
 #include "ota.h"
 
@@ -16,6 +17,7 @@ constexpr char kStateUuid[] = "7b1e8f02-2a5d-4e1a-9c3a-2f6b1d8a10e0";
 constexpr char kMeterUuid[] = "7b1e8f03-2a5d-4e1a-9c3a-2f6b1d8a10e0";
 constexpr char kOtaCtrlUuid[] = "7b1e8f04-2a5d-4e1a-9c3a-2f6b1d8a10e0";
 constexpr char kOtaDataUuid[] = "7b1e8f05-2a5d-4e1a-9c3a-2f6b1d8a10e0";
+constexpr char kScreenUuid[] = "7b1e8f06-2a5d-4e1a-9c3a-2f6b1d8a10e0";
 
 // The state is a set of settings plus the live output level. Settings go out
 // the moment they change. The level on its own changes every frame in any
@@ -43,18 +45,22 @@ enum Opcode : uint8_t {
   OP_SET_MAX_MA = 0x0A,
   OP_SET_SKIP = 0x0B,
   OP_SET_BASS = 0x0C,
+  OP_SET_SCREEN = 0x0D,
 };
 
 NimBLEServer *gServer = nullptr;
 NimBLECharacteristic *gStateChar = nullptr;
 NimBLECharacteristic *gMeterChar = nullptr;
 NimBLECharacteristic *gOtaCtrlChar = nullptr;
+NimBLECharacteristic *gScreenChar = nullptr;
 uint32_t gLastOtaAt = 0;
 bool gOtaRebootPending = false;
 uint32_t gOtaRebootAt = 0;
 uint32_t gLastPushAt = 0;
 uint32_t gLastMeterAt = 0;
 uint8_t gLastBass[BASS_PARAM_COUNT] = {};
+bool gLastScreen = true;
+bool gLastScreenValid = false;
 bool gDirty = false;
 uint8_t gLastMode = 0xFF;
 uint8_t gLastBri = 0xFF;
@@ -121,6 +127,11 @@ void applyControl(const uint8_t *data, size_t len) {
         return;
       }
       Leds::setBass(data[1], data[2]);
+      break;
+    case OP_SET_SCREEN:
+      // Pocket mode. The UI layer blanks itself on its next pass; nothing
+      // about the lights or this link changes.
+      Display::setOn(value != 0);
       break;
     default:
       return;
@@ -305,6 +316,23 @@ void pushState(bool force) {
   gLastPushAt = millis();
 }
 
+// Pocket mode, on its own characteristic because the state payload is full.
+// One byte, so a client only has to read bit 0 of byte 0 to know.
+void pushScreen(bool force) {
+  if (gScreenChar == nullptr) {
+    return;
+  }
+  const bool on = Display::on();
+  if (!force && gLastScreenValid && on == gLastScreen) {
+    return;
+  }
+  gLastScreen = on;
+  gLastScreenValid = true;
+  const uint8_t payload[1] = {(uint8_t)(on ? 1 : 0)};
+  gScreenChar->setValue(payload, sizeof(payload));
+  gScreenChar->notify();
+}
+
 void pushMeter() {
   if (gMeterChar == nullptr || !Leds::bassLive() || gMeterChar->getSubscribedCount() == 0) {
     return;
@@ -350,6 +378,9 @@ void begin() {
   gMeterChar = service->createCharacteristic(
       kMeterUuid, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
 
+  gScreenChar = service->createCharacteristic(
+      kScreenUuid, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
+
   gOtaCtrlChar = service->createCharacteristic(
       kOtaCtrlUuid, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::NOTIFY);
   gOtaCtrlChar->setCallbacks(&gOtaCtrlCallbacks);
@@ -369,6 +400,7 @@ void begin() {
   advertising->start();
 
   pushState(true);
+  pushScreen(true);
 }
 
 void loop() {
@@ -389,6 +421,7 @@ void loop() {
     return;
   }
   pushState(false);
+  pushScreen(false);
   pushMeter();
 }
 

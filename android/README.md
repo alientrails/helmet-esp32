@@ -21,6 +21,23 @@ in `../include/ble.h`.
    ./gradlew testDebugUnitTest
    ```
 
+## Pocket mode: switching the helmet's screen off
+
+**Screen**, in the card under the power switch, blanks the helmet's own
+display and makes it ignore its touchscreen or buttons. It is for the obvious
+reason: the controller rides in a pocket, where a touchscreen is a row of
+buttons being pressed by a thigh.
+
+Everything else carries on — the lights keep running, the mic keeps listening,
+this link stays up — so the way back is always in the app. And it is *only* in
+the app, in both directions, because a screen the helmet could switch back on
+would be switched back on by being sat on. The helmet saves the state, so it
+stays off through a reboot and comes up with no boot card at all.
+
+The control only appears against firmware 1.10.0 and newer, which is where the
+screen characteristic (`7b1e8f06-…`) comes from; older helmets show no switch
+rather than one that would do nothing.
+
 ## Updating the helmet's firmware
 
 The **System** section offers *Update firmware* when the connected helmet
@@ -77,14 +94,20 @@ card in `ui/BrandSplash.kt`.
    nothing playing, set **Noise gate** just above where the bar settles; then
    adjust **Sensitivity** and **Kick** with music on. **Hum** notches out
    mains hum and is best left on.
-5. Changes made on the helmet show up in the app too — the ESP32 pushes
+5. **Screen.** The switch under the power row is pocket mode — see above.
+   It is the only way to turn the helmet's screen off, and the only way to
+   turn it back on.
+6. Changes made on the helmet show up in the app too — the ESP32 pushes
    state updates over a notify characteristic.
 
 ## Protocol
 
 See `../include/ble.h` for the exact GATT layout: one write characteristic
-for commands, one notify characteristic for the state (20 bytes), and one for
-the live bass meter (4 bytes, streamed only in Bass mode). `HelmetProtocol.kt`
+for commands, one notify characteristic for the state (20 bytes), one for the
+live bass meter (4 bytes, streamed only in Bass mode) and one for pocket mode
+(1 byte). Pocket mode has a characteristic of its own because the state
+payload is already exactly the 20 bytes one notification carries at the
+default MTU — and its presence doubles as the capability flag. `HelmetProtocol.kt`
 is the Android-side mirror and holds all the byte layout as pure functions,
 which `app/src/test` pins down; `HelmetBle.kt` does the Bluetooth.
 

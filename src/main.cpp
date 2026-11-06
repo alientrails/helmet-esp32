@@ -2,6 +2,7 @@
 
 #include "ble.h"
 #include "config.h"
+#include "display.h"
 #include "leds.h"
 #include "persist.h"
 #include "ui.h"
@@ -98,9 +99,13 @@ static BtnEvent pollButton(Button &b) {
 }
 
 static void handleButtons() {
+  // Pocket mode still polls, so the debounce state stays current and coming
+  // back out of a pocket cannot fire the press that was being sat on. The
+  // events are simply dropped.
+  const bool live = Display::on();
   for (int i = 0; i < 3; i++) {
     const BtnEvent ev = pollButton(buttons[i]);
-    if (ev == BTN_NONE) {
+    if (ev == BTN_NONE || !live) {
       continue;
     }
     if (i == 0) {
@@ -142,9 +147,15 @@ static void handleSerial() {
     Leds::toggle();
     Persist::markDirty();
     Serial.printf("lights %s\n", Leds::on() ? "on" : "off");
+  } else if (c == 'd' || c == 'D') {
+    // The escape hatch for pocket mode, which the app is otherwise the only
+    // way out of. A USB cable is the one thing a pocket cannot press.
+    Display::setOn(!Display::on());
+    Persist::markDirty();
+    Serial.printf("screen %s\n", Display::on() ? "on" : "off (pocket mode)");
   } else if (c == 's' || c == 'S') {
-    Serial.printf("on=%d mode=%s bri=%u\n", Leds::on(), Leds::modeName(),
-                  Leds::brightness());
+    Serial.printf("on=%d mode=%s bri=%u screen=%s\n", Leds::on(), Leds::modeName(),
+                  Leds::brightness(), Display::on() ? "on" : "off");
   } else if (c == 'm' || c == 'M') {
     Serial.printf("mic pin %d raw:", PIN_MIC);
     for (int i = 0; i < 20; i++) {

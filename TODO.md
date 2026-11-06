@@ -3,12 +3,25 @@
 ## Android app
 
 - [x] **Build it.** It compiled clean on the first pass with no source
-      changes; 17 protocol unit tests now pass and the debug APK builds.
+      changes; 20 protocol unit tests now pass and the debug APK builds.
 - [ ] Check it on a phone against the firmware: the boot card (mark pops in
       from a bare void, no mark in the system splash first), the trail and ion
       slider drags, the hue ring, and the bass meter moving in Bass mode.
 - [ ] Check it against older firmware too: sections the helmet does not
       report (bass, skip) should simply not appear.
+
+## Pocket mode (screen off)
+
+- [ ] Check it on hardware: the CYD's backlight fading down, touch dead while
+      it is off, and the panel coming back up showing current state rather
+      than whatever was on it when it went dark.
+- [ ] Check it survives a reboot in the pocket — the helmet should come up
+      dark with no boot card, and the app's switch should come up off.
+- [ ] Check the XIAO half, which is written but has only been compiled: the
+      OLED powering down, the buttons dropped, and no spurious click when the
+      screen comes back on after a button was held through it.
+- [ ] A kick arriving while the screen is off keeps the bass detector running
+      and the strip flashing, which is intended, but it has not been watched.
 
 ## Firmware
 

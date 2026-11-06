@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "config.h"
+#include "display.h"
 #include "leds.h"
 #include "ota.h"
 
@@ -46,6 +47,9 @@ enum Slot : uint8_t {
   S_MAXMA_HI,
   S_SKIP_LO,
   S_SKIP_HI,
+  // Pocket mode is saved like anything else: a power bank that blinks while
+  // the helmet is in a pocket should not bring the screen back up in there.
+  S_SCREEN,
   S_BASS,  // BASS_PARAM_COUNT bytes from here
   S_LEN = S_BASS + BASS_PARAM_COUNT
 };
@@ -70,6 +74,7 @@ void snapshot(uint8_t *s) {
   const uint16_t skip = Leds::skip();
   s[S_SKIP_LO] = (uint8_t)skip;
   s[S_SKIP_HI] = (uint8_t)(skip >> 8);
+  s[S_SCREEN] = Display::on() ? 1 : 0;
   for (uint8_t i = 0; i < BASS_PARAM_COUNT; i++) {
     s[S_BASS + i] = Leds::bass(i);
   }
@@ -92,6 +97,7 @@ void write(const uint8_t *s) {
   prefs.putUShort("count", u16(s, S_COUNT_LO));
   prefs.putUShort("maxma", u16(s, S_MAXMA_LO));
   prefs.putUShort("skip", u16(s, S_SKIP_LO));
+  prefs.putBool("screen", s[S_SCREEN] != 0);
   for (uint8_t i = 0; i < BASS_PARAM_COUNT; i++) {
     prefs.putUChar(kBassKeys[i], s[S_BASS + i]);
   }
@@ -114,6 +120,9 @@ void begin() {
   Leds::setMaxMilliamps(prefs.getUShort("maxma", LED_MAX_MA));
   // After setCount: the skip is clamped against the strip length.
   Leds::setSkip(prefs.getUShort("skip", LED_SKIP));
+  // Before the UI is built, so a helmet that was pocketed comes straight up
+  // dark rather than flashing its boot card inside the pocket.
+  Display::setOn(prefs.getBool("screen", true));
   // A fresh helmet starts on the firmware's defaults; reading them back first
   // means a missing key falls back to that, not to zero.
   for (uint8_t i = 0; i < BASS_PARAM_COUNT; i++) {

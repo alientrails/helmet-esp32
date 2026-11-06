@@ -113,6 +113,9 @@ Hold **BOOT**, tap **RST**, release BOOT, then upload. Merged images
 | Select on Lights | toggle |
 | Long-press select | home, or toggle from home |
 
+While pocket mode is on (see below) the OLED is powered down and these buttons
+do nothing.
+
 Modes: Solid, Breathe, Heartbeat, Slow blink, Fast blink, Strobe, SOS,
 Party (the rainbow in hard flashes), **Bass** (purple kick meter), Comet,
 Scanner (Cylon sweep), Twinkle, Fire, Rainbow (one spectrum across the strip,
@@ -155,6 +158,27 @@ right order on the **Strip** tab; on the XIAO builds, change
 `LED_ORDER_DEFAULT` in `include/config.h`.
 
 If the OLED is upside down, set `OLED_ROTATION` to `2` in `include/config.h`.
+
+## Pocket mode: the screen off
+
+The controller rides in a pocket, and a touchscreen in a pocket is a row of
+buttons being pressed by a thigh. **Screen** in the app's top card switches
+the helmet's own display and its controls off together: the CYD's panel goes
+void, its backlight dark and its touch ignored; on the XIAO builds the OLED is
+powered down and the three buttons do nothing.
+
+Nothing else stops. The strip keeps running its pattern, the mic keeps
+listening, BLE stays up and a firmware update still works — this is about the
+controls on the helmet, not about what the helmet is doing.
+
+The app is deliberately the only way in **and** the only way out. A screen that
+the helmet could switch back on is a screen that gets switched back on by
+being sat on, which is the problem rather than the fix. The state is saved like
+every other setting, so a power bank that blinks does not wake the screen up
+inside the pocket, and the helmet comes back up dark with no boot card.
+
+If the phone is ever gone, `d` on the serial console toggles it over USB. That
+is the whole escape hatch, and the only one there is.
 
 ## CYD touchscreen build
 
@@ -201,6 +225,9 @@ wears the Alien Trails Labs identity (see [`brand/`](brand/README.md)):
   current budget FastLED holds the strip to. All saved to NVS.
 - **System** — firmware, strip, BLE and uptime, and a touch recalibration
   button.
+
+None of it is reachable in pocket mode: the panel is blank and touch is
+ignored until the app switches the screen back on.
 
 While an update is arriving the screen hands itself over to it completely: the
 strip switches off, a progress bar replaces the tabs, and the one instruction
