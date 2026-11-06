@@ -27,3 +27,10 @@ tools/sim/build/
 
 # Host test binary for the bass detector
 tools/bass_test/bass_test
+
+# App signing. The keystore and its passwords never go in the tree -- CI
+# decodes the key from a secret, and a local build reads
+# android/keystore.properties. See android/README.md.
+android/keystore.properties
+*.jks
+*.keystore

@@ -90,6 +90,14 @@
 - [ ] Neither workflow has run yet — they were written against local builds of
       the same commands, so the first tag push is also the first real test of
       the release job.
-- [ ] The APK a release carries is debug-signed, because the `release`
-      buildType has no signing config. If the app is ever to be distributed
-      properly, that wants a keystore in repository secrets.
+- [x] **App signing.** `app/build.gradle.kts` signs the release build from
+      `android/keystore.properties` or `KEYSTORE_FILE`/`KEYSTORE_PASSWORD`/
+      `KEY_ALIAS`, and the release workflow decodes the key from
+      `KEYSTORE_BASE64`. All three paths were checked against a throwaway
+      keystore, which was then destroyed.
+- [ ] Create the real `alientrails` keystore and add it as **organization**
+      secrets, so one key signs every app in the org. Until then a release
+      ships the debug-signed APK, and debug keys are per-machine: two such
+      APKs cannot upgrade each other.
+- [ ] Do the same in the azimuth repo once its app is set up, so both apps
+      share the one key. Nothing of azimuth's is wired up yet.

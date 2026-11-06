@@ -26,10 +26,53 @@ in `../include/ble.h`.
    instead; see the repository README.
 
 Prebuilt APKs are on the
-[releases](https://github.com/alientrails/helmet-esp32/releases) page. They are
-debug-signed, so Android will ask you to allow installing from unknown
-sources: the `release` buildType carries no signing config, and an unsigned
-APK will not install at all.
+[releases](https://github.com/alientrails/helmet-esp32/releases) page. Android
+will ask you to allow installing from unknown sources either way.
+
+## Signing
+
+One keystore signs every Alien Trails app. Android only requires that an
+update to a given `applicationId` carry the same key as the version already
+installed, so sharing one key across separate apps is both allowed and normal
+— and it is the only way a release built on CI can replace one built on a
+laptop.
+
+The debug keystore cannot do that job: Gradle generates one per machine, so
+two debug APKs of the same app are signed by different keys and installing the
+second over the first fails with a signature mismatch until you uninstall. A
+release ships a `-debug.apk` only when no signing key is configured.
+
+Make the key once, on a machine you keep, not in CI:
+
+```bash
+keytool -genkeypair -v -keystore alientrails-release.jks -storetype PKCS12 -alias alientrails -keyalg RSA -keysize 4096 -validity 10950 -dname "CN=Alien Trails Labs, O=Alien Trails Labs, C=GB"
+```
+
+Then **back it up**. Losing it means never updating any app signed with it:
+a new key is a new identity, and every user has to uninstall first.
+
+To sign locally, drop an `android/keystore.properties` beside `app/` — it is
+gitignored, along with `*.jks` and `*.keystore`:
+
+```
+storeFile=../alientrails-release.jks
+storePassword=...
+keyAlias=alientrails
+```
+
+With PKCS12 the key password is the store password, so `keyPassword` is only
+needed for a JKS keystore where the two differ.
+
+For CI, the same three values go in as secrets —
+`KEYSTORE_BASE64` (`base64 -w0 alientrails-release.jks`), `KEYSTORE_PASSWORD`
+and `KEY_ALIAS`. Set them as **organization** secrets shared to each
+repository and one key covers every app in the org, which is the point. With
+them absent the release job still runs and ships the debug-signed APK, so a
+fork is never blocked on a key it cannot have.
+
+`app/build.gradle.kts` reads either source, prefers the properties file, and
+signs with v2 and v3 — v1 is only read below API 24 and `minSdk` is 26, and v3
+is what carries a rotation lineage if this key ever has to be replaced.
 
 ## Pocket mode: switching the helmet's screen off
 
